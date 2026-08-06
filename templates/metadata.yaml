@@ -1,0 +1,13 @@
+# 报告 YAML 元数据（复制到报告 Markdown 顶部 frontmatter）
+title: "[研究报告名称]"
+subtitle: "[副标题]"
+author: "深度研究项目组"
+version: "V1.0"
+created_date: "YYYY-MM-DD"      # 用真实日期替换
+data_cutoff_date: "YYYY-MM-DD"  # 数据统计截止日期
+language: "zh-CN"
+format: "deep-research-report"
+research_topic: "[研究课题]"
+research_scope: "[地域/行业/技术/时间/公司范围]"
+target_audience: "[企业管理层/技术负责人/投资人/政府部门/行业专家/产品经理/普通读者]"
+depth: "标准"                    # 快速|标准|深度

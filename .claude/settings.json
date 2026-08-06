@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv init:*)",
+      "Bash(uv add:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(uv run python tools/scaffold.py:*)",
+      "Bash(uv run python tools/screenshot.py:*)",
+      "Bash(uv run python tools/render_html.py:*)",
+      "Bash(uv run python tools/evidence.py:*)",
+      "Bash(uv run python tools/qc.py:*)",
+      "Bash(uv run python tools/charts.py:*)",
+      "Bash(uv run python -m py_compile:*)",
+      "Bash(uv run playwright install:*)",
+      "Bash(open:*)"
+    ]
+  }
+}

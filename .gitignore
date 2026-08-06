@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.DS_Store
+*.egg-info/
+.uv-cache/
+
+# 生成的研究交付物（由 /deep-research 产出，不纳入仓库）
+# Generated research deliverables (output of /deep-research; not tracked)
+deep-research-project/
+smoke-test/

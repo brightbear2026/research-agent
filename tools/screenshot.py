@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""screenshot.py — 用 Playwright 无头浏览器对 manifest 中的 URL 做**真实截图**，并维护 figures.csv 索引。
+
+用法:
+  uv run python tools/screenshot.py <manifest.csv> [--root <项目根>] [--figures <figures.csv>] [--force]
+
+manifest.csv 列（由 scaffold 生成表头）:
+  fig_id,url,capture,selector,wait_ms,local_path,title,source_org,source_doc,
+  publish_date,supports_conclusion,is_primary_source
+
+- capture ∈ {full, viewport, element}；element 须配 selector(CSS)。
+- 成功 → 写真实 PNG，status=已截图。
+- 失败 → **绝不伪造**真实内容；写一张**明确标注的占位 PNG**（写明"截图占位/失败原因"），status=失败(占位)。
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import sys
+from datetime import date
+from pathlib import Path
+
+FIGURES_COLS = [
+    "fig_id", "title", "source_org", "source_doc", "url",
+    "publish_date", "access_date", "page_or_location",
+    "supports_conclusion", "is_primary_source", "local_path", "status",
+]
+
+NAV_TIMEOUT_MS = 30000
+VIEWPORT = {"width": 1366, "height": 900}
+UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+def find_cjk_font() -> str | None:
+    for p in [
+        "/System/Library/Fonts/PingFang.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/Library/Fonts/Arial Unicode.ttf",
+        "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    ]:
+        if Path(p).exists():
+            return p
+    return None
+
+
+def make_placeholder(out_path: Path, fig_id: str, reason: str) -> None:
+    """生成**明确标注的占位图**——仅作占位，绝不模仿任何真实来源内容。"""
+    try:
+        from PIL import Image, ImageDraw
+        img = Image.new("RGB", (VIEWPORT["width"], 560), color="#f4f4f5")
+        d = ImageDraw.Draw(img)
+        font = None
+        font_path = find_cjk_font()
+        if font_path:
+            from PIL import ImageFont
+            font = ImageFont.truetype(font_path, 28)
+        lines = [
+            f"[{fig_id}] 截图占位 / Placeholder",
+            "此为占位图，非原始截图内容。",
+            "原因:",
+            reason,
+            "请人工后补或检查 URL/付费墙/JS 拦截。",
+        ]
+        y = 60
+        for ln in lines:
+            d.text((40, y), ln, fill="#b91c1c" if "占位" not in ln else "#52525b", font=font)
+            y += 50
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out_path)
+    except Exception as e:  # 即使占位生成失败也不伪造
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            f"PLACEHOLDER (not a real screenshot) fig_id={fig_id} reason={reason} pil_error={e}",
+            encoding="utf-8",
+        )
+
+
+def load_existing(figures_path: Path) -> dict[str, dict]:
+    rows: dict[str, dict] = {}
+    if figures_path.exists():
+        with figures_path.open(encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if r.get("fig_id"):
+                    rows[r["fig_id"]] = r
+    return rows
+
+
+def write_figures(figures_path: Path, rows: dict[str, dict]) -> None:
+    figures_path.parent.mkdir(parents=True, exist_ok=True)
+    with figures_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=FIGURES_COLS)
+        w.writeheader()
+        for fig_id in sorted(rows):
+            w.writerow({k: rows[fig_id].get(k, "") for k in FIGURES_COLS})
+
+
+def capture_one(page, row: dict) -> tuple[bool, str]:
+    """返回 (是否成功, 失败原因)。成功时 page 已导航就绪。"""
+    url = row.get("url", "").strip()
+    if not url or not url.startswith(("http://", "https://")):
+        return False, f"无效 URL: {url!r}"
+    capture = (row.get("capture") or "full").strip().lower()
+    selector = (row.get("selector") or "").strip()
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+    except Exception as e:
+        return False, f"导航失败: {e}"
+    try:
+        wait = int(row.get("wait_ms") or 1500)
+    except ValueError:
+        wait = 1500
+    try:
+        if selector:
+            try:
+                page.wait_for_selector(selector, timeout=min(max(wait, 1000), 15000))
+            except Exception:
+                pass
+        page.wait_for_timeout(wait)
+    except Exception:
+        pass
+    return True, ""
+
+
+def do_screenshot(page, out_path: Path, capture: str, selector: str) -> tuple[bool, str]:
+    try:
+        if capture == "element":
+            if not selector:
+                return False, "element 截图缺 selector"
+            el = page.locator(selector).first
+            el.screenshot(path=str(out_path))
+        elif capture == "viewport":
+            page.screenshot(path=str(out_path), full_page=False)
+        else:  # full
+            page.screenshot(path=str(out_path), full_page=True)
+        return True, ""
+    except Exception as e:
+        return False, f"截图异常: {e}"
+
+
+def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int:
+    if not manifest_path.exists():
+        sys.exit(f"✗ 找不到 manifest: {manifest_path}")
+    with manifest_path.open(encoding="utf-8") as f:
+        manifest = list(csv.DictReader(f))
+    if not manifest:
+        print("manifest 为空，无操作。")
+        return 0
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        sys.exit("✗ 未安装 playwright，请: uv add playwright && uv run playwright install chromium")
+
+    # 始终合并已有索引（--force 仅控制是否重拍已截图项，绝不丢弃既有行）
+    rows = load_existing(figures_path)
+    today = date.today().isoformat()
+    ok = fail = skipped = 0
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(viewport=VIEWPORT, user_agent=UA)
+            page = context.new_page()
+
+            for row in manifest:
+                fig_id = (row.get("fig_id") or "").strip()
+                if not fig_id:
+                    continue
+                rel = (row.get("local_path") or f"images/{fig_id}.png").strip()
+                out_path = root / rel  # local_path 相对于项目根解析
+                if fig_id in rows and not force and rows[fig_id].get("status") == "已截图":
+                    print(f"  ⊘ 跳过(已截图): {fig_id}")
+                    skipped += 1
+                    continue
+
+                print(f"  → {fig_id}  {row.get('url','')[:80]}")
+                nav_ok, reason = capture_one(page, row)
+                captured = False
+                if nav_ok:
+                    cap = (row.get("capture") or "full").lower()
+                    captured, reason = do_screenshot(page, out_path, cap, row.get("selector", ""))
+                if not captured:
+                    make_placeholder(out_path, fig_id, reason)
+                    status = "失败(占位)"
+                    fail += 1
+                    print(f"    ✗ {status}: {reason}")
+                else:
+                    status = "已截图"
+                    ok += 1
+                    print(f"    ✓ {status} → {out_path}")
+
+                rows[fig_id] = {
+                    "fig_id": fig_id,
+                    "title": row.get("title", ""),
+                    "source_org": row.get("source_org", ""),
+                    "source_doc": row.get("source_doc", ""),
+                    "url": row.get("url", ""),
+                    "publish_date": row.get("publish_date", ""),
+                    "access_date": today,
+                    "page_or_location": row.get("selector", ""),
+                    "supports_conclusion": row.get("supports_conclusion", ""),
+                    "is_primary_source": row.get("is_primary_source", ""),
+                    "local_path": rel,
+                    "status": status,
+                }
+
+            context.close()
+            browser.close()
+    except Exception as e:
+        if "Executable doesn't appear" in str(e) or "playwright install" in str(e).lower():
+            sys.exit("✗ 未安装浏览器，请: uv run playwright install chromium\n" + str(e))
+        raise
+
+    write_figures(figures_path, rows)
+    print(f"\n汇总: 成功 {ok} / 失败 {fail} / 跳过 {skipped} | 索引: {figures_path}")
+    return 0 if fail == 0 else 1
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Playwright 真实截图 + figures 索引")
+    ap.add_argument("manifest", help="screenshot_manifest.csv 路径")
+    ap.add_argument("--root", default=".", help="项目根目录（解析 local_path）")
+    ap.add_argument("--figures", default=None, help="figures.csv 输出路径（默认 <root>/data/figures.csv）")
+    ap.add_argument("--force", action="store_true", help="即使已截图也重拍")
+    args = ap.parse_args()
+
+    root = Path(args.root).resolve()
+    figures = Path(args.figures).resolve() if args.figures else root / "data" / "figures.csv"
+    sys.exit(run(Path(args.manifest).resolve(), figures, root, args.force))
+
+
+if __name__ == "__main__":
+    main()
