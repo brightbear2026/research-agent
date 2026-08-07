@@ -112,10 +112,14 @@ def classify_url(url: str) -> tuple[str, str]:
         return ("skip", "httpx 不可用")
     try:
         with httpx.Client(follow_redirects=False, timeout=12.0, headers={
-            "User-Agent": "Mozilla/5.0 (compatible; research-agent-qc/1.0)"
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/124.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
         }) as c:
             r = c.head(url)
-            if r.status_code in (405, 501):
+            if r.status_code in (400, 405, 501):  # 部分站点对 HEAD 处理异常，回退 GET
                 r = c.get(url)
             host = urlparse(url).netloc
             if host in SEARCH_HOSTS:
@@ -123,11 +127,20 @@ def classify_url(url: str) -> tuple[str, str]:
             if 300 <= r.status_code < 400:
                 loc = r.headers.get("location", "")
                 return ("warn", f"重定向 {r.status_code} → {loc}")
+            # 400/401/403/429 通常是反爬/请求被拒/限流而非真死链
+            # （来源经研究期 WebFetch 或 Playwright 截图验证存在）
+            if r.status_code in (400, 401, 403, 429):
+                return ("warn", f"HTTP {r.status_code}（疑似反爬/限流/需鉴权，建议人工核）")
             if r.status_code >= 400:
                 return ("dead", f"HTTP {r.status_code}")
             return ("ok", f"HTTP {r.status_code}")
     except Exception as e:
-        return ("dead", f"异常: {type(e).__name__}")
+        ename = type(e).__name__
+        # 网络层异常多为瞬时或反爬，不作硬死链
+        if ename in ("ConnectError", "ConnectTimeout", "ReadTimeout",
+                     "PoolTimeout", "RemoteProtocolError", "ReadError"):
+            return ("warn", f"网络异常 {ename}（可能瞬时/反爬，建议人工核）")
+        return ("dead", f"异常: {ename}")
 
 
 def check_links(report: Report, citations: list[dict], figures: list[dict]) -> None:
