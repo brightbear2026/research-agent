@@ -12,7 +12,9 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
 - 区分 **事实 / 人物观点 / 机构观点 / 争议 / 研究判断 / 推测**，用行内标签：
   `【事实】` `【观点·姓名·机构·YYYY-MM-DD】` `【机构观点·机构·日期】` `【争议】` `【研究判断】` `【推测】`
 - 关键数值类结论（规模/收入/用户/份额/融资）须 ≥2 独立来源；冲突时**列出各方 + 口径/时间/机构差异**，给条件性结论，不二选一。
-- 截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造任何图片；只把需要截图的页面登记到 `data/screenshot_manifest.csv`。
+- 截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造任何图片。
+- **图片内联到章节正文（重要）**：为每张需要的截图指定全局唯一 `fig_id`（如 `FIG-005`，按本章首次出现顺序续编），在**支撑该论断的正文位置**用 Markdown 图片语法 `![简述](images/FIG-005.png)` 单独成段引用（此时 png 尚未生成，由调度方阶段六 `screenshot.py` 按 manifest 的 `local_path=images/FIG-005.png` 产出真实文件；`render_html.py` 会自动把它增强为带来源 caption 的 `<figure>`）。**禁止在草稿末尾或单设「截图」节集中罗列图片。** 同步把该 `fig_id`＋URL＋capture 登记到 `data/screenshot_manifest.csv`。
+- **关系/架构图用 Mermaid，禁手画 ASCII（重要）**：概念关系图、架构图、阵营/竞争格局图、流程图、时间轴等结构化图统一用 ```` ```mermaid ```` 代码块书写（调度方 `render_html.py` 会渲染为拓扑图）；**禁止手画 ASCII 框线图**（`┌─┐│└┘├┤┬▼` 制表符拼接的关系图）——其无法被渲染器图形化，HTML 里仅作裸文本，完全丧失排版价值。如确需纯文本示意，改用普通段落或表格，不要用 ASCII 画框。
 
 # 来源分层与工具（科技/产业）
 | 等级 | 来源 | 工具 |

@@ -68,17 +68,40 @@
   hr{border:none;border-top:1px solid var(--border);margin:32px 0}
 
   /* tables */
-  .table-wrap{overflow-x:auto;margin:16px 0;border:1px solid var(--border);border-radius:8px}
-  table{border-collapse:collapse;width:100%;font-size:14px}
-  th,td{padding:8px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+  .table-wrap{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:8px;max-width:100%;
+    box-shadow:var(--shadow)}
+  .table-wrap table{margin:0}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;font-variant-numeric:tabular-nums}
+  th,td{padding:9px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;
+    word-break:break-word;overflow-wrap:anywhere}
   th{background:var(--bg-soft);font-weight:600;white-space:nowrap}
-  tbody tr:hover{background:var(--bg-soft)}
+  tbody tr:nth-child(even){background:var(--bg-soft)}
+  tbody tr:hover{background:var(--primary-soft)}
+  tbody td:first-child{font-weight:600;color:var(--text)}
+  .table-wrap table caption{caption-side:top;font-size:13px;color:var(--muted);padding:6px 12px;text-align:left}
+
+  /* 时间线（竖向时间轴，由「年份：事件」列表转换而来） */
+  ol.timeline{list-style:none;margin:22px 0;padding:2px 0 2px 28px;border-left:2px solid var(--border)}
+  ol.timeline li{position:relative;margin:0 0 14px}
+  ol.timeline li::before{content:"";position:absolute;left:-35px;top:6px;width:12px;height:12px;border-radius:50%;
+    background:var(--primary);box-shadow:0 0 0 3px var(--card),0 0 0 5px var(--primary-soft)}
+  ol.timeline .t-time{display:inline-block;font-weight:700;color:var(--primary);font-variant-numeric:tabular-nums;
+    font-size:13.5px;margin-bottom:2px}
+  ol.timeline .t-body{display:block;color:var(--text-soft);font-size:14.5px;line-height:1.7}
+  ol.timeline .t-body :is(strong,b){color:var(--text)}
 
   /* figures */
   figure{margin:18px 0;text-align:center}
   figure img{max-width:100%;height:auto;border:1px solid var(--border);border-radius:8px;cursor:zoom-in}
   figcaption{font-size:13px;color:var(--muted);margin-top:6px;text-align:center}
   figcaption b{color:var(--text-soft)}
+
+  /* mermaid 概念图（由 Mermaid.js 渲染；离线/被墙时降级 .mermaid-fallback 显示源码） */
+  .mermaid{margin:20px auto;text-align:center;max-width:100%;overflow-x:auto}
+  .mermaid svg{max-width:100%;height:auto}
+  .mermaid-fallback{margin:18px 0;padding:14px;background:var(--bg-soft);border:1px dashed var(--border);
+    border-radius:8px;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:12.5px;color:var(--text-soft);overflow-x:auto;line-height:1.5}
 
   /* citations */
   a.cite{color:var(--accent);font-weight:600;font-size:.85em;white-space:nowrap}
@@ -212,5 +235,14 @@
     }
   })();
 </script>
+
+  <!-- Mermaid 概念图：需联网加载 CDN；离线/被墙时降级为原始文本 -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"
+          onerror="this.remove();document.querySelectorAll('.mermaid').forEach(function(e){e.className='mermaid-fallback';})"></script>
+  <script>
+    if (window.mermaid) {
+      mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose', fontFamily: 'inherit' });
+    }
+  </script>
 </body>
 </html>

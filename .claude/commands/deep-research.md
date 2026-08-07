@@ -8,6 +8,7 @@ argument-hint: <研究课题> [depth=快速|标准|深度]
 严格遵循本仓库 `CLAUDE.md` 的全部约定（红线、来源分层、行内标签、引用、目录契约）。不要一次性生成最终报告——按下面 **6 阶段** 推进，阶段一/二/三结束用 `AskUserQuestion` 暂停确认。
 
 ## 0. 解析与初始化
+- **每个课题独立启动，不前置参考 `projects/` 下其他课题的历史报告/产出**。新课题从课题本身的研究问题与关键词出发；既有课题报告仅作交付归档，不作为新课题的背景输入。除非用户明确要求引用某既有课题结论，否则不读取其他课题目录。
 - 从参数解析 `depth`（默认「标准」）。规则：
   - 快速：5–7 章，每结论 ≥1 一级来源，截图按需。
   - 标准：12–13 章，每结论 ≥2 一级来源，关键页强制截图。
@@ -40,14 +41,14 @@ argument-hint: <研究课题> [depth=快速|标准|深度]
 ## 阶段四 · 分章深研（派 researcher 子代理）
 对每一章：
 1. 先写「研究卡」（可基于 `templates/research_card.md`）。
-2. 用 **Agent 工具派发 `researcher` 子代理**执行该章（独立维度可多条并行；单消息内放多个 Agent 调用以并发）。**每个 researcher 的 prompt 必须前置：「先读 `data/glossary.md`，全文术语定义以此为准，不得自行另造或漂移」**，并告知本章涉及的术语条目。子代理产出 `report/_draft_<chNN>_<slug>.md`，使用内联源标签 `[[SRC|...]]`（见 researcher 契约）。
+2. 用 **Agent 工具派发 `researcher` 子代理**执行该章（独立维度可多条并行；单消息内放多个 Agent 调用以并发）。**每个 researcher 的 prompt 必须前置：「先读 `data/glossary.md`，全文术语定义以此为准，不得自行另造或漂移」**，并告知本章涉及的术语条目。子代理产出 `report/_draft_<chNN>_<slug>.md`，使用内联源标签 `[[SRC|...]]`（见 researcher 契约）。**截图须在草稿正文支撑处用 `![简述](images/FIG-NNN.png)` 内联（fig_id 全局唯一、按出现顺序续编），不得在草稿末尾或单设「截图」节集中罗列**（详见 researcher 契约）。
 3. 收齐所有章节草稿。
 
 ## 阶段五 · 合并与初稿（你亲自做合并，保证编号一致）
 1. 读取全部 `report/_draft_*.md`。
 2. **源标签 → 引用编号**：按 url 去重所有 `[[SRC|...]]` 标签，依首次出现顺序分配全局 `[1][2]…`；生成 `data/citations.csv`（字段：id/type/author_org/title/publication_site/publish_date/doi_or_id/url/access_date/page_or_location/tier）。
 3. 把草稿中每个 `[[SRC|...]]` 替换为对应 `[n]`（同源复用同一编号）。
-4. 组装 `report/research_report.md`：YAML frontmatter（基于 `templates/metadata.yaml`，填真实日期）+ 目录 + 各章正文 + 附录 + 参考文献（占位，由渲染器生成）。
+4. 组装 `report/research_report.md`：YAML frontmatter（基于 `templates/metadata.yaml`，填真实日期）+ 目录 + 各章正文 + 附录 + 参考文献（占位，由渲染器生成）。**保留各章草稿里已内联的每张图片 `![简述](images/FIG-NNN.png)` 在其原章节位置，不得把图片集中移到附录或报告末尾**；附录不单列截图（见 `templates/report_skeleton.md`）。
 5. 把各章「数据小表」汇总进 `data/source_data.csv`；论文进 `data/paper_list.csv`；企业对比进 `data/company_comparison.csv`；主来源进 `data/source_index.csv`。
 6. 把需截图项写进 `data/screenshot_manifest.csv`。
 7. 把核心结论/争议分别进 `evidence/evidence_matrix.csv`、`evidence/controversy_matrix.csv`。

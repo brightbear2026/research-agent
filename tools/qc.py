@@ -102,6 +102,13 @@ def check_figures(report: Report, md_text: str, figures: list[dict], root: Path)
     if fake:
         names = [r.get("fig_id", "?") for r in fake]
         report.warnings.append(f"存在占位/失败截图（非原始截图）：{names} —— 请人工后补或正文标注")
+    # 反向校验：真实截图必须内联到正文，不得只留在索引或集中堆末尾
+    unplaced = [r.get("fig_id", "?") for r in figures
+                if (r.get("status") or "") == "已截图"
+                and r.get("local_path")
+                and Path(r["local_path"]).name not in fig_refs]
+    if unplaced:
+        report.warnings.append(f"已生成截图未内联到正文（应插入对应章节，勿集中堆附录/末尾）：{unplaced}")
     report.ok.append(f"图片检查：正文引用 {len(fig_refs)} 个 / 登记 {len(figures)} 个")
 
 

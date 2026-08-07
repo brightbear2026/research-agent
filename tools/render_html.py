@@ -14,6 +14,7 @@ import argparse
 import csv
 import re
 import sys
+from html import escape as html_escape
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -161,6 +162,53 @@ def enhance_figures(body_html: str, figures: list[dict]) -> str:
     return body_html
 
 
+def wrap_tables(body_html: str) -> str:
+    """给每个 <table> 包 <div class="table-wrap">：宽表横向滚动，不撑破布局。"""
+    return re.sub(
+        r"(<table\b.*?</table>)",
+        r'<div class="table-wrap">\1</div>',
+        body_html, flags=re.DOTALL,
+    )
+
+
+def enhance_timelines(body_html: str) -> str:
+    """把「以年份开头为主」的 <ul> 列表转成竖向时间轴 <ol class="timeline">。
+    年份格式包容：2012 / 约2016 / 2022末 / 2023-07 / 2024-09/12 / 2027 H2 等；
+    ul 内匹配年份的 li ≥3 个即转时间轴——匹配项带时间点，不匹配项原样作为轴内普通条目；
+    纯普通列表（匹配<3）不误伤，保持 <ul>。"""
+    ul_re = re.compile(r"<ul>\s*((?:<li>.*?</li>\s*)+)</ul>", re.DOTALL)
+    li_re = re.compile(r"<li>(.*?)</li>", re.DOTALL)
+    head_re = re.compile(
+        r"^\s*((?:约|大约)?\s*\d{4}(?:[-/]\d{1,2}(?:[-/]\d{1,2})?)?"
+        r"(?:\s*/\s*\d{1,2})?(?:\s*(?:末|初|上|下|上半年|下半年|H[12]|Q[1-4]))?)\s*[：:]",
+        re.DOTALL,
+    )
+
+    def convert(m: re.Match) -> str:
+        raw = li_re.findall(m.group(1))
+        parsed = []  # (matched, when, body)
+        matched = 0
+        for li in raw:
+            s = li.strip()
+            hm = head_re.match(s)
+            if hm:
+                matched += 1
+                parsed.append((True, hm.group(1).strip(), s[hm.end():].lstrip()))
+            else:
+                parsed.append((False, "", s))
+        if matched < 3:
+            return m.group(0)
+        items = []
+        for ok, when, body in parsed:
+            if ok:
+                items.append(f'<li><span class="t-time">{when}</span><div class="t-body">{body}</div></li>')
+            else:
+                items.append(f'<li><div class="t-body">{body}</div></li>')
+        return '<ol class="timeline">' + "".join(items) + "</ol>"
+
+    return ul_re.sub(convert, body_html)
+
+
 def link_citations(body_html: str) -> set[int]:
     """把 [n] 转成锚链接，返回被引用的 id 集合。"""
     cited: set[int] = set()
@@ -236,12 +284,22 @@ def render(md_path: Path, out_path: Path, root: Path, template_path: Path) -> No
     meta, body_md = split_frontmatter(text)
 
     md = MarkdownIt("commonmark", {"html": True}).enable("table")
+    # ```mermaid 代码块 → <div class="mermaid">，交由模板里的 Mermaid.js 渲染成拓扑图
+    _orig_fence = md.renderer.rules.get("fence")
+    def _fence(tokens, idx, options, env):
+        if tokens[idx].info.strip() == "mermaid":
+            # 保留 mermaid 语法里的 "（label 用），仅转义会破坏 HTML 的 < > &
+            return "<div class=\"mermaid\">" + html_escape(tokens[idx].content, quote=False) + "</div>\n"
+        return _orig_fence(tokens, idx, options, env)
+    md.renderer.rules["fence"] = _fence
     body_html = md.render(body_md)
 
     body_html, nav = assign_heading_ids(body_html)
     body_html = render_inline_tags(body_html)
     figures = load_csv_dicts(root / "data" / "figures.csv")
     body_html = enhance_figures(body_html, figures)
+    body_html = enhance_timelines(body_html)
+    body_html = wrap_tables(body_html)
     body_html, cited = link_citations(body_html)
 
     citations = load_csv_dicts(root / "data" / "citations.csv")
