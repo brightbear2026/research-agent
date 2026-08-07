@@ -53,7 +53,7 @@ Skill 接收 `depth=快速|标准|深度`（默认「标准」）：
 
 ## 运行工具（统一前缀 `uv run python tools/xxx.py`）
 - `scaffold.py <项目名>`：建交付目录树 + 空索引。
-- `screenshot.py <manifest.csv>`：Playwright 真实截图 + 写 `figures.csv`。
+- `screenshot.py <manifest.csv>`：真实截图（`full`/`viewport`/`element` 区块/`pdf` 指定页）+ 写 `figures.csv`。
 - `render_html.py <md> <out.html>`：渲染自包含 HTML。
 - `evidence.py`：生成证据/争议矩阵 + 资料缺口。
 - `qc.py <项目名>`：链接/引用/截图/表格/格式质检。

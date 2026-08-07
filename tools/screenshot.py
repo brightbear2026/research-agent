@@ -8,7 +8,9 @@ manifest.csv 列（由 scaffold 生成表头）:
   fig_id,url,capture,selector,wait_ms,local_path,title,source_org,source_doc,
   publish_date,supports_conclusion,is_primary_source
 
-- capture ∈ {full, viewport, element}；element 须配 selector(CSS)。
+- capture ∈ {full, viewport, element, pdf}；
+  - full=整页、viewport=视口、element=按 CSS selector 截区块、
+  - pdf=下载 PDF 并渲染指定页（selector 填页码，如 "1" / "1-3" / "2,4"，默认第 1 页；多页纵向拼接）。
 - 成功 → 写真实 PNG，status=已截图。
 - 失败 → **绝不伪造**真实内容；写一张**明确标注的占位 PNG**（写明"截图占位/失败原因"），status=失败(占位)。
 """
@@ -138,6 +140,88 @@ def do_screenshot(page, out_path: Path, capture: str, selector: str) -> tuple[bo
         return False, f"截图异常: {e}"
 
 
+def parse_pages(spec: str, max_pages: int) -> list[int]:
+    """解析页码规格 → 0-based 页索引列表。支持 '1'、'1-3'、'2,4'；默认第 1 页。"""
+    spec = (spec or "").strip().lower()
+    for tok in ("page", "页", "p", ":"):
+        spec = spec.replace(tok, " ")
+    spec = spec.replace("，", ",").replace("、", ",")
+    if not spec.strip():
+        spec = "1"
+    out: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            try:
+                lo, hi = int(a), int(b)
+            except ValueError:
+                continue
+            out.extend(i - 1 for i in range(lo, hi + 1) if 1 <= i <= max_pages)
+        else:
+            try:
+                n = int(part)
+            except ValueError:
+                continue
+            if 1 <= n <= max_pages:
+                out.append(n - 1)
+    seen: set[int] = set()
+    res = [x for x in out if not (x in seen or seen.add(x))]
+    return res or [0]
+
+
+def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
+    """下载 PDF 并把指定页渲染成 PNG（多页纵向拼接）。无需浏览器，独立于 Playwright。"""
+    try:
+        import io
+        import httpx
+        import pymupdf
+        from PIL import Image
+    except ImportError as e:
+        return False, f"缺依赖（pymupdf/httpx/Pillow）: {e}"
+    try:
+        r = httpx.get(url, timeout=30.0, follow_redirects=True, headers={
+            "User-Agent": UA, "Accept": "application/pdf,*/*",
+        })
+    except Exception as e:
+        return False, f"PDF 下载异常: {type(e).__name__}"
+    if r.status_code >= 400:
+        return False, f"PDF 下载失败 HTTP {r.status_code}"
+    ctype = r.headers.get("content-type", "").lower()
+    is_pdf = ("pdf" in ctype) or url.lower().endswith(".pdf") or r.content[:5].startswith(b"%PDF-")
+    if not is_pdf:
+        return False, f"非 PDF 内容 (content-type={ctype})"
+    try:
+        doc = pymupdf.open(stream=r.content, filetype="pdf")
+    except Exception as e:
+        return False, f"PDF 解析失败: {type(e).__name__}"
+    if doc.page_count == 0:
+        return False, "PDF 无页面"
+    pages = parse_pages(page_spec, doc.page_count)
+    pngs: list[bytes] = []
+    for pidx in pages:
+        if 0 <= pidx < doc.page_count:
+            pngs.append(doc[pidx].get_pixmap(dpi=150).tobytes("png"))
+    doc.close()
+    if not pngs:
+        return False, "指定页超出范围"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if len(pngs) == 1:
+        out_path.write_bytes(pngs[0])
+    else:  # 多页纵向拼接
+        ims = [Image.open(io.BytesIO(b)).convert("RGB") for b in pngs]
+        w = max(im.width for im in ims)
+        canvas = Image.new("RGB", (w, sum(im.height for im in ims)), "white")
+        y = 0
+        for im in ims:
+            canvas.paste(im, (0, y))
+            y += im.height
+        canvas.save(out_path)
+    return True, ""
+
+
 def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int:
     if not manifest_path.exists():
         sys.exit(f"✗ 找不到 manifest: {manifest_path}")
@@ -174,12 +258,18 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
                     skipped += 1
                     continue
 
-                print(f"  → {fig_id}  {row.get('url','')[:80]}")
-                nav_ok, reason = capture_one(page, row)
-                captured = False
-                if nav_ok:
-                    cap = (row.get("capture") or "full").lower()
-                    captured, reason = do_screenshot(page, out_path, cap, row.get("selector", ""))
+                url = (row.get("url") or "").strip()
+                cap = (row.get("capture") or "full").strip().lower()
+                is_pdf = cap == "pdf" or url.lower().endswith(".pdf")
+                tag = "[PDF]" if is_pdf else ("[element]" if cap == "element" else "")
+                print(f"  → {fig_id} {tag} {url[:80]}")
+                captured, reason = False, ""
+                if is_pdf:
+                    captured, reason = capture_pdf(url, out_path, row.get("selector", ""))
+                else:
+                    nav_ok, reason = capture_one(page, row)
+                    if nav_ok:
+                        captured, reason = do_screenshot(page, out_path, cap, row.get("selector", ""))
                 if not captured:
                     make_placeholder(out_path, fig_id, reason)
                     status = "失败(占位)"
@@ -198,7 +288,7 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
                     "url": row.get("url", ""),
                     "publish_date": row.get("publish_date", ""),
                     "access_date": today,
-                    "page_or_location": row.get("selector", ""),
+                    "page_or_location": (f"PDF p.{row.get('selector', '1')}" if is_pdf else row.get("selector", "")),
                     "supports_conclusion": row.get("supports_conclusion", ""),
                     "is_primary_source": row.get("is_primary_source", ""),
                     "local_path": rel,
