@@ -1,0 +1,28 @@
+research_question: ""
+executive_answer: ""
+central_thesis: ""
+target_audience: ""
+decision_context: ""
+
+claims:
+  - id: C1
+    claim: ""
+    why_it_matters: ""
+    depends_on: []
+    supporting_evidence_needed: []
+    counter_evidence_needed: []
+    chapter: ch01
+    decision_implication: ""
+
+chapters:
+  - id: ch01
+    title: ""
+    reader_question: ""
+    thesis: ""
+    argument_role: ""
+    depends_on: []
+    hands_off_to: []
+    non_goals: []
+    target_words: 3000
+
+appendix_candidates: []

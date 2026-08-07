@@ -31,7 +31,7 @@
 
 ## 引用与单一事实源
 - 正文用 `[n]` 编号引用，每个 `[n]` 必须在 `data/citations.csv` 中登记（作者/标题/出版物/日期/DOI/原始链接/访问日期/页码）。
-- **Markdown 为规范叙事（canonical）**，HTML 由 `tools/render_html.py` 从 Markdown + 旁路索引（`data/citations.csv`、`figures.csv`、`tables.csv`）派生，禁止两版分别手写。
+- **Markdown 为规范叙事（canonical）**：`report/_assembled_report.md` 是确定性组装稿，经 `report-editor` 只做压缩、去重和重组后生成 `report/research_report.md` 终稿；HTML 再由 `tools/render_html.py` 从终稿 + 旁路索引派生，禁止两版分别手写。
 - 自制图表标题统一标「数据来源：根据公开资料整理/计算」，不得冒充机构原图。
 - **截图/自制图表内联到所支撑的章节正文**：在相关论断处用 Markdown 图片语法 `![简述](images/FIG-NNN.png)` 单独成段展示；**不得在附录或报告末尾集中罗列图片**。`data/figures.csv` 仅作旁路索引（供 caption、`qc.py` 校验），不是展示位置。
 - **结构化关系图统一用 Mermaid**：概念关系图、架构图、阵营/竞争格局图、流程图、时间轴等用 mermaid 代码块（fence 语言标注 `mermaid`），由 `render_html.py` 自动渲染为拓扑图；**禁止手画 ASCII 框线图**（`┌─┐│└┘├┤┬▼` 制表符拼接的关系图）——其无法被渲染器图形化，HTML 里仅作裸文本，丧失排版价值。
@@ -40,25 +40,25 @@
 ```
 projects/<课题slug>/
 ├── README.md
-├── report/{research_report.md, research_report.html}
+├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
-├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md}
+├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md, chapter_meta.json}
 ├── evidence/{evidence_matrix.csv, controversy_matrix.csv, research_gaps.md}
 └── sources/{bibliography.md, source_index.md}
 ```
 
 ## 深度旋钮
 Skill 接收 `depth=快速|标准|深度`（默认「标准」）：
-- 快速：核心 5–7 章，每结论 ≥1 一级来源，截图按需。
-- 标准：完整 12–13 章，每结论 ≥2 一级来源，关键页强制截图。
-- 深度：标准 + 每章多轮反向验证 + 全量截图。
+- 快速：3–5 个核心论证章节，正文约 1–2 万字，每结论 ≥1 一级来源，截图按需。
+- 标准：5–8 个论证章节，正文约 2–4 万字，每结论 ≥2 一级来源，关键页强制截图。
+- 深度：6–10 个论证章节，正文原则上不超过 6 万字，标准要求 + 每章多轮反向验证 + 全量截图。
 
 ## 运行工具（统一前缀 `uv run python tools/xxx.py`）
 - `scaffold.py <项目名>`：建交付目录树 + 空索引。
 - `screenshot.py <manifest.csv>`：真实截图（`full`/`viewport`/`element` 区块/`pdf` 指定页）+ 写 `figures.csv`。
 - `render_html.py <md> <out.html>`：渲染自包含 HTML。
 - `evidence.py`：生成证据/争议矩阵 + 资料缺口。
-- `qc.py <项目名>`：链接/引用/截图/表格/格式质检。
+- `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。
 - `charts.py`：生成图表到 `images/`。
 
 ## 默认与禁忌

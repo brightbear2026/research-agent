@@ -54,24 +54,24 @@ uv run playwright install chromium   # 首次需要，约下载 ~150MB
 
 | 取值 | 章节数 | 每个结论来源 | 截图 |
 |---|---|---|---|
-| `快速` | 核心 5–7 章 | ≥1 一级来源 | 按需 |
-| `标准`（默认） | 完整 12–13 章 | ≥2 一级来源 | 关键页强制 |
-| `深度` | 标准 + 反向验证 | 多轮交叉 | 全量 |
+| `快速` | 3–5 个论证章节，约 1–2 万字 | ≥1 一级来源 | 按需 |
+| `标准`（默认） | 5–8 个论证章节，约 2–4 万字 | ≥2 一级来源 | 关键页强制 |
+| `深度` | 6–10 个论证章节，原则上 ≤6 万字 | 多轮交叉 | 全量 |
 
 ### 六阶段流程
 
 1. **启动**：课题定义/边界、≥15 个研究问题、中英文关键词矩阵 → 检查点
 2. **广泛调研**：论文/人物/头部企业/政策标准/数据/案例 6 张清单 → 检查点
-3. **大纲**：基于调研（非预设）生成三级大纲 → 检查点
-4. **分章深研**：每章写「研究卡」，并行派发 `researcher` 子代理
-5. **合并**：标签去重 → 全局 `[n]` 引用 → 写 `citations.csv` → 组装报告
-6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py` 质检全绿 → README
+3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再生成动态大纲 → 检查点
+4. **分章深研**：每章写「研究卡」，并行派发 `researcher`；读者正文与 `.meta.json` 分离
+5. **组装与总编辑**：标签去重 → 全局 `[n]` → `_assembled_report.md` → 总编辑压缩、去重、重组为终稿
+6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py --strict`（含可读性）→ README
 
 ### 目录结构
 
 ```
 .claude/
-├── agents/researcher.md            # L1 研究员子代理（检索/验证/写作执行体）
+├── agents/{researcher,report-editor}.md # 研究执行 + 受限总编辑
 ├── commands/deep-research.md       # L2 调度方（六阶段 + 检查点 + 合并协议，canonical）
 ├── skills/deep-research/SKILL.md   # 技能入口（可发现摘要）
 └── settings.json                   # 工具命令权限白名单
@@ -87,6 +87,9 @@ tools/                              # 确定性工具（scaffold/screenshot/rend
 # 建交付目录树 + 空索引
 uv run python tools/scaffold.py projects/my-topic
 
+# 确定性组装（产出 _assembled_report.md + citations.csv）
+uv run python tools/merge.py projects/my-topic --require-meta --title "报告标题"
+
 # Playwright 真实截图（读 manifest，写 figures.csv）
 uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
 
@@ -96,8 +99,9 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # 生成证据/争议矩阵 + 资料缺口
 uv run python tools/evidence.py --root projects/my-topic
 
-# 质检：引用闭环 + 链接活性 + 截图对应（退出码 0 才算交付）
-uv run python tools/qc.py --root projects/my-topic
+# 终检：引用闭环 + 链接 + 截图 + 可读性 + 编辑引用审计
+uv run python tools/qc.py --root projects/my-topic --strict \
+  --citation-baseline projects/my-topic/report/_assembled_report.md
 
 # 自制图表（标题自动标注「数据来源：根据公开资料整理/计算」）
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -125,20 +129,20 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 
 ### 单一事实源（双格式一致性）
 
-- `report/research_report.md` 为规范叙事（canonical）。
+- `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py` 校验：正文 `[n]` ↔ citations.csv 闭环、图片对应真实文件、链接活性。
+- `qc.py --strict` 校验：正文 `[n]` ↔ citations.csv 闭环、图片对应、链接活性、内部材料残留、篇幅/句段长度以及总编辑未创造新引用。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
 ```
 projects/my-topic/
 ├── README.md
-├── report/{research_report.md, research_report.html}
+├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, source_index, screenshot_manifest}.csv
+│        paper_list, source_index, screenshot_manifest}.csv, chapter_meta.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
 ```
@@ -195,24 +199,24 @@ Output lands in `projects/my-topic/` (renameable).
 
 | Value | Chapters | Sources per conclusion | Screenshots |
 |---|---|---|---|
-| `fast` (`快速`) | 5–7 core | ≥1 primary | as needed |
-| `standard` (`标准`, default) | full 12–13 | ≥2 primary | key pages forced |
-| `deep` (`深度`) | standard + adversarial verification | multi-round cross-check | full |
+| `fast` (`快速`) | 3–5 argument chapters, ~10–20k Chinese chars | ≥1 primary | as needed |
+| `standard` (`标准`, default) | 5–8 argument chapters, ~20–40k Chinese chars | ≥2 primary | key pages forced |
+| `deep` (`深度`) | 6–10 argument chapters, normally ≤60k Chinese chars | multi-round cross-check | full |
 
 ### Six-Phase Pipeline
 
 1. **Kickoff**: scope/boundaries, ≥15 research questions, bilingual keyword matrix → checkpoint
 2. **Broad survey**: 6 lists (papers / people / leading companies / policy & standards / data / cases) → checkpoint
-3. **Outline**: three-level outline derived from research (not preset) → checkpoint
-4. **Per-chapter deep research**: write a "research card" per chapter, dispatch `researcher` subagents in parallel
-5. **Merge**: dedupe source tags → global `[n]` citations → write `citations.csv` → assemble report
-6. **Deliver**: screenshots → render HTML → evidence matrix → `qc.py` all-green → README
+3. **Argument map + outline**: define thesis, claims, dependencies and evidence before the dynamic outline → checkpoint
+4. **Per-chapter research**: dispatch `researcher` subagents; keep reader-facing Markdown separate from `.meta.json`
+5. **Assemble + edit**: dedupe source tags → `_assembled_report.md` → constrained editor compresses and restructures the final narrative
+6. **Deliver**: screenshots → render HTML → evidence matrix → strict QC including readability → README
 
 ### Directory Layout
 
 ```
 .claude/
-├── agents/researcher.md            # L1 researcher subagent (search/verify/write worker)
+├── agents/{researcher,report-editor}.md # research worker + constrained final editor
 ├── commands/deep-research.md       # L2 orchestrator (6 phases + checkpoints + merge protocol; canonical)
 ├── skills/deep-research/SKILL.md   # Skill entry (discoverable summary)
 └── settings.json                   # allowed tool commands
@@ -228,6 +232,9 @@ tools/                              # deterministic tools (scaffold/screenshot/r
 # Scaffold the delivery tree + empty indexes
 uv run python tools/scaffold.py projects/my-topic
 
+# Deterministic assembly (_assembled_report.md + citations.csv)
+uv run python tools/merge.py projects/my-topic --require-meta --title "Report title"
+
 # Playwright real screenshots (reads manifest, writes figures.csv)
 uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
 
@@ -237,8 +244,9 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # Build evidence/controversy matrices + research gaps
 uv run python tools/evidence.py --root projects/my-topic
 
-# Quality check: citation closure + link liveness + screenshot correspondence (exit 0 = deliverable)
-uv run python tools/qc.py --root projects/my-topic
+# Final gate: citations + links + figures + readability + editor citation audit
+uv run python tools/qc.py --root projects/my-topic --strict \
+  --citation-baseline projects/my-topic/report/_assembled_report.md
 
 # Self-made charts (auto-appends "Source: compiled/calculated from public data")
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -266,20 +274,20 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 
 ### Single Source of Truth (dual-format consistency)
 
-- `report/research_report.md` is the canonical narrative.
+- `report/_assembled_report.md` is the deterministic assembly; `report/research_report.md` is the constrained editor's canonical final narrative.
 - Citations `[n]`, figures, and tables derive from `data/{citations,figures,tables}.csv`.
 - HTML is generated by `render_html.py` from Markdown + sidecar indexes — **never hand-author both versions**.
-- `qc.py` verifies: in-text `[n]` ↔ citations.csv closure, figure ↔ real file correspondence, link liveness.
+- `qc.py --strict` verifies citation closure, figures, links, leaked process material, length/sentence/paragraph limits, and that editing introduced no new citation IDs.
 
 ### Delivery Tree (created by `scaffold.py`)
 
 ```
 projects/my-topic/
 ├── README.md
-├── report/{research_report.md, research_report.html}
+├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, source_index, screenshot_manifest}.csv
+│        paper_list, source_index, screenshot_manifest}.csv, chapter_meta.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
 ```

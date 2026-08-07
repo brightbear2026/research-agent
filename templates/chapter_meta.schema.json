@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Research chapter metadata",
+  "type": "object",
+  "required": [
+    "chapter_id",
+    "title",
+    "reader_question",
+    "thesis",
+    "argument_role",
+    "data_points",
+    "screenshots",
+    "controversies",
+    "gaps",
+    "chapter_conclusion"
+  ],
+  "properties": {
+    "chapter_id": {"type": "string", "pattern": "^ch[0-9]{2}$"},
+    "title": {"type": "string", "minLength": 1},
+    "reader_question": {"type": "string", "minLength": 1},
+    "thesis": {"type": "string", "minLength": 1},
+    "argument_role": {"type": "string", "minLength": 1},
+    "data_points": {"type": "array", "items": {"type": "object"}},
+    "screenshots": {"type": "array", "items": {"type": "object"}},
+    "controversies": {"type": "array", "items": {"type": "object"}},
+    "gaps": {"type": "array"},
+    "chapter_conclusion": {
+      "type": "object",
+      "required": ["judgment", "counter_evidence", "conditions", "time_range", "confidence", "decision_implication"],
+      "properties": {
+        "judgment": {"type": "string"},
+        "counter_evidence": {"type": "string"},
+        "conditions": {"type": "string"},
+        "time_range": {"type": "string"},
+        "confidence": {"enum": ["高", "中高", "中", "中低", "低"]},
+        "decision_implication": {"type": "string"}
+      }
+    }
+  },
+  "additionalProperties": true
+}

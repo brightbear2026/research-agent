@@ -10,9 +10,9 @@ argument-hint: <研究课题> [depth=快速|标准|深度]
 ## 0. 解析与初始化
 - **每个课题独立启动，不前置参考 `projects/` 下其他课题的历史报告/产出**。新课题从课题本身的研究问题与关键词出发；既有课题报告仅作交付归档，不作为新课题的背景输入。除非用户明确要求引用某既有课题结论，否则不读取其他课题目录。
 - 从参数解析 `depth`（默认「标准」）。规则：
-  - 快速：5–7 章，每结论 ≥1 一级来源，截图按需。
-  - 标准：12–13 章，每结论 ≥2 一级来源，关键页强制截图。
-  - 深度：标准 + 每章反向验证多轮 + 全量截图。
+  - 快速：3–5 个核心论证章节，正文约 1–2 万字，每结论 ≥1 一级来源，截图按需。
+  - 标准：5–8 个论证章节，正文约 2–4 万字，每结论 ≥2 一级来源，关键页强制截图。
+  - 深度：6–10 个论证章节，正文原则上不超过 6 万字，标准要求 + 每章反向验证多轮 + 全量截图。
 - **项目目录名 = `projects/<课题slug>`**（如「AI Agent 安全」→ `projects/ai-agent-security`；slug 用课题英文/拼音短名、kebab-case）。**每个课题一个独立 slug 文件夹，绝不复用旧目录**，从源头避免覆盖上一课题。
 - 运行 `uv run python tools/scaffold.py projects/<课题slug>` 建骨架。若该目录已存在且非空，scaffold 会**拒绝**（需换 slug；或加 `--force`——会先把旧目录备份为 `<slug>-backup-<时间>`，不直接清空）。
 - 用 `TaskCreate` 建立阶段一~六的任务，逐个 `in_progress`/`completed`。
@@ -34,31 +34,30 @@ argument-hint: <研究课题> [depth=快速|标准|深度]
 - 关键论文/人物/企业尽量读一手原文（WebFetch）。
 → **检查点**：`AskUserQuestion` 确认调研覆盖面与重点。
 
-## 阶段三 · 正式大纲（基于调研，非预设）
-产出三级大纲 `sources/stage3_outline.md`，覆盖规范建议的 13 章结构（按课题裁剪）。每章列出：目标、核心问题、所需证据、预期图表、预期截图、预期结论。**大纲必须是调研结果，不是预设答案的包装。**
+## 阶段三 · 论证地图与正式大纲（基于调研，非预设）
+先产出 `sources/stage3_argument_map.yaml`：研究问题、一句话答案、总论点、3–7 个核心分论点、分论点依赖关系、所需正反证据、承载章节与决策含义。再据此产出三级大纲 `sources/stage3_outline.md`。**不默认套用固定 13 章**；历史、人物、政策、企业等材料只有在支撑核心论点时才独立成章，否则放进最相关章节或证据附件。每章列出：读者问题、一句话结论、在总论证中的作用、依赖/交给相邻章节的问题、目标字数、所需正反证据、预期图表与截图。大纲必须是调研结果，不是预设答案的包装。
 → **检查点**：`AskUserQuestion` 确认大纲。
 
 ## 阶段四 · 分章深研（派 researcher 子代理）
 对每一章：
 1. 先写「研究卡」（可基于 `templates/research_card.md`）。
-2. 用 **Agent 工具派发 `researcher` 子代理**执行该章（独立维度可多条并行；单消息内放多个 Agent 调用以并发）。**每个 researcher 的 prompt 必须前置：「先读 `data/glossary.md`，全文术语定义以此为准，不得自行另造或漂移」**，并告知本章涉及的术语条目。子代理产出 `report/_draft_<chNN>_<slug>.md`，使用内联源标签 `[[SRC|...]]`（见 researcher 契约）。**截图须在草稿正文支撑处用 `![简述](images/FIG-NNN.png)` 内联（fig_id 全局唯一、按出现顺序续编），不得在草稿末尾或单设「截图」节集中罗列**（详见 researcher 契约）。
+2. 用 **Agent 工具派发 `researcher` 子代理**执行该章（独立维度可多条并行；单消息内放多个 Agent 调用以并发）。**每个 researcher 的 prompt 必须前置：「先读 `data/glossary.md`，全文术语定义以此为准，不得自行另造或漂移」**，并告知本章涉及的术语条目。子代理同时产出 `report/_draft_<chNN>_<slug>.md`（只含读者正文）与同名 `.meta.json`（数据点、截图、争议、缺口）。正文使用内联源标签 `[[SRC|...]]`（见 researcher 契约）。**截图须在草稿正文支撑处用 `![简述](images/FIG-NNN.png)` 内联（fig_id 全局唯一、按出现顺序续编），不得在草稿末尾或单设「截图」节集中罗列**（详见 researcher 契约）。
 3. 收齐所有章节草稿。
 
-## 阶段五 · 合并与初稿（你亲自做合并，保证编号一致）
-1. 读取全部 `report/_draft_*.md`。
-2. **源标签 → 引用编号**：按 url 去重所有 `[[SRC|...]]` 标签，依首次出现顺序分配全局 `[1][2]…`；生成 `data/citations.csv`（字段：id/type/author_org/title/publication_site/publish_date/doi_or_id/url/access_date/page_or_location/tier）。
-3. 把草稿中每个 `[[SRC|...]]` 替换为对应 `[n]`（同源复用同一编号）。
-4. 组装 `report/research_report.md`：YAML frontmatter（基于 `templates/metadata.yaml`，填真实日期）+ 目录 + 各章正文 + 附录 + 参考文献（占位，由渲染器生成）。**保留各章草稿里已内联的每张图片 `![简述](images/FIG-NNN.png)` 在其原章节位置，不得把图片集中移到附录或报告末尾**；附录不单列截图（见 `templates/report_skeleton.md`）。
-5. 把各章「数据小表」汇总进 `data/source_data.csv`；论文进 `data/paper_list.csv`；企业对比进 `data/company_comparison.csv`；主来源进 `data/source_index.csv`。
-6. 把需截图项写进 `data/screenshot_manifest.csv`。
-7. 把核心结论/争议分别进 `evidence/evidence_matrix.csv`、`evidence/controversy_matrix.csv`。
-8. 运行 `uv run python tools/qc.py --root <项目名> --skip-links`，按报错修订（补登记/补来源/修标签）。可迭代多轮。
+## 阶段五 · 确定性组装 + 总编辑
+1. 运行 `uv run python tools/merge.py <项目名> --require-meta ...`，把所有草稿中的源标签按 URL 去重并分配全局 `[n]`，生成 `data/citations.csv`、`data/chapter_meta.json` 与 `report/_assembled_report.md`。合并器兼容 Markdown 表格中的 `[[SRC\|...]]`，并剔除旧格式草稿的生产过程章节。
+2. 读取各章 `.meta.json`，把数据点汇总进 `data/source_data.csv`，截图写入 `data/screenshot_manifest.csv`，核心结论/争议写入 evidence 矩阵；不要从读者正文反向解析这些内部数据。
+3. 派发 `report-editor` 总编辑代理。它读取组装稿、argument map、大纲和术语表，只做重组、压缩、去重和语言编辑，**不得搜索或新增事实、数字、来源、案例与引用编号**，输出 `report/research_report.md`。
+4. 总编辑必须保留各章草稿里已内联的图片在其支撑论断附近，不得把图片集中移到附录或报告末尾。
+5. 运行：
+   `uv run python tools/qc.py --root <项目名> --report <项目名>/report/research_report.md --citation-baseline <项目名>/report/_assembled_report.md --skip-links --depth <档位>`
+   修复残留源标签、生产过程文字、超长句段、重复结构和引用问题。
 
 ## 阶段六 · 交付
 1. `uv run python tools/screenshot.py <项目名>/data/screenshot_manifest.csv --root <项目名>` 生成真实截图与 `figures.csv`（失败页自动落占位，禁止伪造）。
 2. `uv run python tools/render_html.py <项目名>/report/research_report.md --root <项目名>` 生成自包含 HTML。
 3. `uv run python tools/evidence.py --root <项目名>` 汇总证据库。
-4. `uv run python tools/qc.py --root <项目名>`（含链接检查）做终检；非 0 退出则修订直至通过（死链/未登记引用/缺失图必须修）。
+4. `uv run python tools/qc.py --root <项目名> --citation-baseline <项目名>/report/_assembled_report.md --depth <档位> --strict`（含链接与可读性检查）做终检；非 0 退出则修订直至通过。严格模式下占位截图、未登记图、引用元数据缺失、残留内部文字和严重可读性问题都会阻止交付。
 5. 写 `<项目名>/README.md`（课题、文件结构、阅读方式、数据截止、截图说明、研究限制、更新方式）。
 6. 最终交付：MD + HTML + evidence 矩阵 + 截图目录；向用户汇报路径与 qc 结果。
 

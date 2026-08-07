@@ -216,7 +216,8 @@ def link_citations(body_html: str) -> set[int]:
     def repl(m: re.Match) -> str:
         n = int(m.group(1))
         cited.add(n)
-        return f'<a class="cite" href="#ref-{n}">[{n}]</a>'
+        return (f'<sup class="cite"><a href="#ref-{n}" '
+                f'aria-label="参考文献 {n}">{n}</a></sup>')
 
     body_html = re.sub(r"\[(\d{1,4})\]", repl, body_html)
     return body_html, cited

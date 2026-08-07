@@ -104,7 +104,8 @@
     font-size:12.5px;color:var(--text-soft);overflow-x:auto;line-height:1.5}
 
   /* citations */
-  a.cite{color:var(--accent);font-weight:600;font-size:.85em;white-space:nowrap}
+  sup.cite{font-size:.72em;line-height:0;vertical-align:super;margin-left:1px;white-space:nowrap}
+  sup.cite a{color:var(--accent);font-weight:700}
   .references{font-size:13.5px}
   .references ol{padding-left:22px}
   .references li{margin:6px 0;color:var(--text-soft);word-break:break-word}
@@ -112,6 +113,7 @@
   /* inline tags */
   .tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:4px;vertical-align:middle}
   .tag-fact{background:#ccfbf1;color:#115e59}
+  body:not(.evidence-mode) .tag-fact{display:none}
   .tag-opinion{background:#ede9fe;color:#5b21b6}
   .tag-org{background:#dbeafe;color:#1e40af}
   .tag-dispute{background:#fee2e2;color:#991b1b}
@@ -149,6 +151,7 @@
 <div class="toolbar no-print">
   <button id="menu-toggle" class="btn" aria-label="目录">☰ 目录</button>
   <span class="t-title">{{ meta.get('title','深度研究报告') }}</span>
+  <button id="evidence-toggle" class="btn" aria-pressed="false">🔎 证据模式</button>
   <button id="theme-toggle" class="btn">🌙 深色</button>
   <button id="print-btn" class="btn">🖨️ 打印 / PDF</button>
 </div>
@@ -207,6 +210,22 @@
     btn.addEventListener('click',function(){
       var cur=root.getAttribute('data-theme')==='dark'?'light':'dark';
       root.setAttribute('data-theme',cur); localStorage.setItem('dr-theme',cur); setLabel();
+    });
+  })();
+  // 普通阅读默认隐藏高频“事实”标签；需要审计时开启证据模式
+  (function(){
+    var btn=document.getElementById('evidence-toggle');
+    var enabled=localStorage.getItem('dr-evidence')==='on';
+    function apply(){
+      document.body.classList.toggle('evidence-mode',enabled);
+      btn.setAttribute('aria-pressed',enabled?'true':'false');
+      btn.textContent=enabled?'📖 阅读模式':'🔎 证据模式';
+    }
+    apply();
+    btn.addEventListener('click',function(){
+      enabled=!enabled;
+      localStorage.setItem('dr-evidence',enabled?'on':'off');
+      apply();
     });
   })();
   // 打印
