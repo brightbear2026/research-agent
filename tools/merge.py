@@ -16,6 +16,7 @@ import argparse
 import csv
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 TAG_RE = re.compile(r"\[\[SRC\|(.*?)\]\]")
@@ -86,12 +87,58 @@ def build_row(n: int, parts: list[str]) -> dict:
     }
 
 
+def _esc(s: str) -> str:
+    return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").strip()
+
+
+def build_refs_md(num_to_row: dict[int, dict]) -> str:
+    """从 citations 数据生成 Markdown 参考文献 <ol>（带 id="ref-N" 锚点），写入 MD 使其自包含。"""
+    if not num_to_row:
+        return ""
+    items = []
+    for n in sorted(num_to_row):
+        r = num_to_row[n]
+        seg = []
+        a = _esc(r.get("author_org", ""))
+        if a:
+            seg.append(a)
+        t = _esc(r.get("title", ""))
+        if t:
+            seg.append(f"《{t}》" if not t.startswith("《") else t)
+        pub = _esc(r.get("publication_site", ""))
+        d = _esc(r.get("publish_date", ""))
+        tail = [x for x in (pub, d) if x]
+        if tail:
+            seg.append("，".join(tail))
+        url = (r.get("url", "") or "").strip()
+        if url:
+            seg.append(f'<a href="{url}">{url}</a>')
+        extra = []
+        ad = _esc(r.get("access_date", ""))
+        if ad:
+            extra.append(f"访问 {ad}")
+        tier = _esc(r.get("tier", ""))
+        if tier:
+            extra.append(f"等级 {tier}")
+        line = ". ".join(s for s in seg if s)
+        if extra:
+            line += "（" + "；".join(extra) + "）"
+        items.append(f'<li value="{n}" id="ref-{n}">{line}.</li>')
+    return "## 参考文献\n\n<ol>\n" + "\n".join(items) + "\n</ol>\n"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="合并章节草稿 → research_report.md + citations.csv")
     ap.add_argument("root", help="项目根目录")
-    ap.add_argument("--title", default="AI Agent 安全与 AI 安全护栏")
-    ap.add_argument("--subtitle", default="从威胁全景到护栏架构、可解性之争与中国实践")
+    ap.add_argument("--title", default="深度研究报告")
+    ap.add_argument("--subtitle", default="")
+    ap.add_argument("--topic", default=None, help="研究课题（默认同 title）")
+    ap.add_argument("--depth", default="标准", help="快速|标准|深度")
+    ap.add_argument("--scope", default="", help="研究范围")
+    ap.add_argument("--audience", default="", help="目标读者")
     args = ap.parse_args()
+    topic = args.topic or args.title
+    today = date.today().isoformat()
 
     root = Path(args.root).resolve()
     report_dir = root / "report"
@@ -139,20 +186,22 @@ def main() -> int:
     frontmatter = f"""---
 title: "{args.title}"
 subtitle: "{args.subtitle}"
-research_topic: "AI Agent 安全与 AI 安全护栏"
+research_topic: "{topic}"
 version: "1.0"
-created_date: "2026-08-06"
-data_cutoff_date: "2026-08-06"
-depth: "标准"
-research_scope: "全球（加重中国视角）；技术 + 市场 + 治理均衡"
-target_audience: "技术决策者、AI 产品/安全负责人、研究者"
+created_date: "{today}"
+data_cutoff_date: "{today}"
+depth: "{args.depth}"
+research_scope: "{args.scope}"
+target_audience: "{args.audience}"
 language: "zh-CN"
 ---
 
 """
 
+    refs_md = build_refs_md(num_to_row)
+    tail = ("\n---\n\n" + refs_md) if refs_md else ""
     report_md = report_dir / "research_report.md"
-    report_md.write_text(frontmatter + toc + body, encoding="utf-8")
+    report_md.write_text(frontmatter + toc + body + tail, encoding="utf-8")
 
     # 写 citations.csv
     citations_path = root / "data" / "citations.csv"

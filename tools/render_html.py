@@ -245,7 +245,8 @@ def render(md_path: Path, out_path: Path, root: Path, template_path: Path) -> No
     body_html, cited = link_citations(body_html)
 
     citations = load_csv_dicts(root / "data" / "citations.csv")
-    refs_html = build_refs(citations, cited)
+    # 若 MD 已含参考文献（由 merge.py 写入），则不重复注入，避免 HTML 出现双份
+    refs_html = "" if 'id="ref-1"' in body_html else build_refs(citations, cited)
 
     env = Environment(loader=FileSystemLoader(str(template_path.parent)),
                       autoescape=select_autoescape(default=False))

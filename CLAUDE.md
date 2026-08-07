@@ -40,7 +40,7 @@ projects/<课题slug>/
 ├── README.md
 ├── report/{research_report.md, research_report.html}
 ├── images/FIG-###.png
-├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv}
+├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md}
 ├── evidence/{evidence_matrix.csv, controversy_matrix.csv, research_gaps.md}
 └── sources/{bibliography.md, source_index.md}
 ```
