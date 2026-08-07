@@ -2,7 +2,7 @@
 """scaffold.py — 创建深度研究项目的标准目录树与空索引文件。
 
 用法: uv run python tools/scaffold.py <项目名|路径> [--force]
-默认项目名: deep-research-project
+默认项目路径: projects/research（建议 projects/<课题slug>，每课题一个独立文件夹）
 
 依据研究规范第十六节「最终交付目录」。所有索引 CSV 仅写表头，由研究过程逐行填充。
 """
@@ -80,8 +80,19 @@ def write_csv_header(path: Path, header: list[str]) -> None:
 
 
 def scaffold(root: Path, force: bool) -> None:
-    if root.exists() and any(root.iterdir()) and not force:
-        sys.exit(f"✗ 目录已存在且非空: {root}（加 --force 覆盖）")
+    if root.exists() and any(root.iterdir()):
+        if not force:
+            sys.exit(f"✗ 目录已存在且非空: {root}（加 --force 覆盖；--force 会先把旧目录备份为 <名>-backup-<时间>，不直接清空）")
+        # --force：先备份旧目录，绝不静默清空既有成果
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = root.with_name(f"{root.name}-backup-{ts}")
+        n = 1
+        while backup.exists():
+            backup = root.with_name(f"{root.name}-backup-{ts}-{n}")
+            n += 1
+        root.rename(backup)
+        print(f"⚠ 已备份旧目录: {root.name} → {backup.name}（新内容将写入 {root.name}）")
     root.mkdir(parents=True, exist_ok=True)
 
     for rel, _ in TREE:
@@ -107,8 +118,8 @@ def scaffold(root: Path, force: bool) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="创建深度研究项目目录树")
-    ap.add_argument("project", nargs="?", default="deep-research-project",
-                    help="项目目录名或路径（默认 deep-research-project）")
+    ap.add_argument("project", nargs="?", default="projects/research",
+                    help="项目目录名或路径（建议 projects/<课题slug>）")
     ap.add_argument("--force", action="store_true", help="目录非空时仍覆盖")
     args = ap.parse_args()
     scaffold(Path(args.project), args.force)

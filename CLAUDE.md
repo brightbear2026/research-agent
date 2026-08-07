@@ -1,6 +1,6 @@
 # 研究代理项目约定（research-agent）
 
-本仓库是一个 **Claude Code 原生深度研究代理**：以 `/deep-research <课题>` 触发，按 6 阶段执行「调研→证据库→大纲→分章深研→双格式交付」，最终在 `deep-research-project/` 落地 Markdown + HTML 报告与证据矩阵。领域定位：**科技/产业**。
+本仓库是一个 **Claude Code 原生深度研究代理**：以 `/deep-research <课题>` 触发，按 6 阶段执行「调研→证据库→大纲→分章深研→双格式交付」，最终在 `projects/<课题slug>/`（如 `projects/ai-agent-security`）落地 Markdown + HTML 报告与证据矩阵——**每个课题一个独立 slug 文件夹，互不覆盖**。领域定位：**科技/产业**。
 
 ## 不可违反的红线
 - **不编造**：论文、作者、人物发言、数据、公司方案、市场规模、URL、截图、政策、产品能力、访谈、页码、日期——一律不得虚构。
@@ -36,7 +36,7 @@
 
 ## 交付目录契约（由 `tools/scaffold.py` 生成）
 ```
-deep-research-project/
+projects/<课题slug>/
 ├── README.md
 ├── report/{research_report.md, research_report.html}
 ├── images/FIG-###.png

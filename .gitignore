@@ -6,7 +6,7 @@ __pycache__/
 *.egg-info/
 .uv-cache/
 
-# 生成的研究交付物（由 /deep-research 产出，不纳入仓库）
-# Generated research deliverables (output of /deep-research; not tracked)
-deep-research-project/
+# 生成的研究交付物（由 /deep-research 产出，每课题一个 projects/<slug>/，不纳入仓库）
+# Generated research deliverables (one projects/<slug>/ folder per topic; not tracked)
+projects/
 smoke-test/

@@ -12,8 +12,8 @@ argument-hint: <研究课题> [depth=快速|标准|深度]
   - 快速：5–7 章，每结论 ≥1 一级来源，截图按需。
   - 标准：12–13 章，每结论 ≥2 一级来源，关键页强制截图。
   - 深度：标准 + 每章反向验证多轮 + 全量截图。
-- 项目目录名：`deep-research-project`（或课题拼音/英文缩写）。
-- 运行 `uv run python tools/scaffold.py <项目名>` 建骨架。
+- **项目目录名 = `projects/<课题slug>`**（如「AI Agent 安全」→ `projects/ai-agent-security`；slug 用课题英文/拼音短名、kebab-case）。**每个课题一个独立 slug 文件夹，绝不复用旧目录**，从源头避免覆盖上一课题。
+- 运行 `uv run python tools/scaffold.py projects/<课题slug>` 建骨架。若该目录已存在且非空，scaffold 会**拒绝**（需换 slug；或加 `--force`——会先把旧目录备份为 `<slug>-backup-<时间>`，不直接清空）。
 - 用 `TaskCreate` 建立阶段一~六的任务，逐个 `in_progress`/`completed`。
 
 ## 阶段一 · 研究启动（先调研再设计大纲）

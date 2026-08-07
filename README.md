@@ -48,7 +48,7 @@ uv run playwright install chromium   # 首次需要，约下载 ~150MB
 /deep-research <你的课题> depth=标准
 ```
 
-产出落在 `deep-research-project/`（可改名）。
+产出落在 `projects/my-topic/`（可改名）。
 
 ### 深度旋钮（depth）
 
@@ -85,19 +85,19 @@ tools/                              # 确定性工具（scaffold/screenshot/rend
 
 ```bash
 # 建交付目录树 + 空索引
-uv run python tools/scaffold.py deep-research-project
+uv run python tools/scaffold.py projects/my-topic
 
 # Playwright 真实截图（读 manifest，写 figures.csv）
-uv run python tools/screenshot.py deep-research-project/data/screenshot_manifest.csv --root deep-research-project
+uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
 
 # Markdown → 自包含 HTML（带目录导航/深色模式/打印样式/引用锚点）
-uv run python tools/render_html.py deep-research-project/report/research_report.md --root deep-research-project
+uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
 
 # 生成证据/争议矩阵 + 资料缺口
-uv run python tools/evidence.py --root deep-research-project
+uv run python tools/evidence.py --root projects/my-topic
 
 # 质检：引用闭环 + 链接活性 + 截图对应（退出码 0 才算交付）
-uv run python tools/qc.py --root deep-research-project
+uv run python tools/qc.py --root projects/my-topic
 
 # 自制图表（标题自动标注「数据来源：根据公开资料整理/计算」）
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -133,7 +133,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 ### 交付目录契约（由 `scaffold.py` 生成）
 
 ```
-deep-research-project/
+projects/my-topic/
 ├── README.md
 ├── report/{research_report.md, research_report.html}
 ├── images/FIG-###.png
@@ -189,7 +189,7 @@ uv run playwright install chromium   # first run only, ~150MB download
 /deep-research <your topic> depth=standard
 ```
 
-Output lands in `deep-research-project/` (renameable).
+Output lands in `projects/my-topic/` (renameable).
 
 ### Depth Knob
 
@@ -226,19 +226,19 @@ tools/                              # deterministic tools (scaffold/screenshot/r
 
 ```bash
 # Scaffold the delivery tree + empty indexes
-uv run python tools/scaffold.py deep-research-project
+uv run python tools/scaffold.py projects/my-topic
 
 # Playwright real screenshots (reads manifest, writes figures.csv)
-uv run python tools/screenshot.py deep-research-project/data/screenshot_manifest.csv --root deep-research-project
+uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
 
 # Markdown → self-contained HTML (nav / dark mode / print styles / citation anchors)
-uv run python tools/render_html.py deep-research-project/report/research_report.md --root deep-research-project
+uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
 
 # Build evidence/controversy matrices + research gaps
-uv run python tools/evidence.py --root deep-research-project
+uv run python tools/evidence.py --root projects/my-topic
 
 # Quality check: citation closure + link liveness + screenshot correspondence (exit 0 = deliverable)
-uv run python tools/qc.py --root deep-research-project
+uv run python tools/qc.py --root projects/my-topic
 
 # Self-made charts (auto-appends "Source: compiled/calculated from public data")
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -274,7 +274,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 ### Delivery Tree (created by `scaffold.py`)
 
 ```
-deep-research-project/
+projects/my-topic/
 ├── README.md
 ├── report/{research_report.md, research_report.html}
 ├── images/FIG-###.png
