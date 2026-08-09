@@ -182,9 +182,19 @@ def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
     except ImportError as e:
         return False, f"缺依赖（pymupdf/httpx/Pillow）: {e}"
     try:
-        r = httpx.get(url, timeout=30.0, follow_redirects=True, headers={
-            "User-Agent": UA, "Accept": "application/pdf,*/*",
-        })
+        # arXiv 等学术 PDF 体积大、链路慢，30s 常超时；给 180s + 一次重试
+        r = None
+        for attempt in (1, 2):
+            try:
+                r = httpx.get(url, timeout=180.0, follow_redirects=True, headers={
+                    "User-Agent": UA, "Accept": "application/pdf,*/*",
+                })
+                break
+            except (httpx.TransportError, httpx.HTTPError) as e:
+                if attempt == 2:
+                    raise
+        if r is None:
+            return False, "PDF 下载异常: 无响应"
     except Exception as e:
         return False, f"PDF 下载异常: {type(e).__name__}"
     if r.status_code >= 400:
