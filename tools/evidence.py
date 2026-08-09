@@ -16,7 +16,8 @@ from collections import Counter
 from pathlib import Path
 
 EV_HEADER = ["conclusion_id", "core_conclusion", "supporting_evidence",
-             "opposing_evidence", "source_tier", "sufficiency", "final_judgment"]
+             "opposing_evidence", "source_tier", "sufficiency", "final_judgment",
+             "limitations"]
 CT_HEADER = ["controversy_id", "question", "view_a", "supporters_a",
              "view_b", "supporters_b", "evidence_comparison", "research_judgment"]
 

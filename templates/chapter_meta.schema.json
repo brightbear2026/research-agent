@@ -1,13 +1,18 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Research chapter metadata",
+  "$id": "https://research-agent.local/schemas/chapter-meta-v2.json",
+  "title": "Research chapter metadata v2",
+  "description": "单章研究元数据。合并后的 chapter_meta.json 是此对象的数组。",
   "type": "object",
   "required": [
+    "schema_version",
     "chapter_id",
     "title",
     "reader_question",
     "thesis",
     "argument_role",
+    "sources",
+    "claims",
     "data_points",
     "screenshots",
     "controversies",
@@ -15,26 +20,105 @@
     "chapter_conclusion"
   ],
   "properties": {
+    "schema_version": {"const": 2},
     "chapter_id": {"type": "string", "pattern": "^ch[0-9]{2}$"},
     "title": {"type": "string", "minLength": 1},
     "reader_question": {"type": "string", "minLength": 1},
     "thesis": {"type": "string", "minLength": 1},
     "argument_role": {"type": "string", "minLength": 1},
-    "data_points": {"type": "array", "items": {"type": "object"}},
+    "sources": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/source"}
+    },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/claim"}
+    },
+    "data_points": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/evidence"}
+    },
     "screenshots": {"type": "array", "items": {"type": "object"}},
     "controversies": {"type": "array", "items": {"type": "object"}},
     "gaps": {"type": "array"},
-    "chapter_conclusion": {
+    "chapter_conclusion": {"$ref": "#/$defs/chapterConclusion"}
+  },
+  "$defs": {
+    "nullableString": {"type": ["string", "null"]},
+    "confidence": {"enum": ["高", "中高", "中", "中低", "低"]},
+    "source": {
       "type": "object",
-      "required": ["judgment", "counter_evidence", "conditions", "time_range", "confidence", "decision_implication"],
+      "required": ["source_id", "title", "url", "tier"],
       "properties": {
-        "judgment": {"type": "string"},
-        "counter_evidence": {"type": "string"},
+        "source_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+$"},
+        "title": {"type": "string", "minLength": 1},
+        "url": {"type": ["string", "null"], "format": "uri"},
+        "organization": {"$ref": "#/$defs/nullableString"},
+        "publish_date": {"$ref": "#/$defs/nullableString"},
+        "tier": {"enum": ["A", "B", "C", "D", null]},
+        "independence_group": {"$ref": "#/$defs/nullableString"}
+      },
+      "additionalProperties": true
+    },
+    "claim": {
+      "type": "object",
+      "required": [
+        "claim_id", "text", "source_ids", "supporting_evidence_ids",
+        "opposing_evidence_ids", "confidence", "limitations"
+      ],
+      "properties": {
+        "claim_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+$"},
+        "text": {"type": "string", "minLength": 1},
+        "source_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "supporting_evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "opposing_evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "evidence_id", "claim_id", "source_ids", "value", "unit",
+        "stat_time", "region", "population_or_scope", "definition",
+        "confidence", "limitations"
+      ],
+      "properties": {
+        "evidence_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+$"},
+        "claim_id": {"type": "string", "minLength": 1},
+        "source_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "value": {},
+        "unit": {"$ref": "#/$defs/nullableString"},
+        "stat_time": {"$ref": "#/$defs/nullableString"},
+        "region": {"$ref": "#/$defs/nullableString"},
+        "population_or_scope": {"$ref": "#/$defs/nullableString"},
+        "definition": {"$ref": "#/$defs/nullableString"},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": true
+    },
+    "chapterConclusion": {
+      "type": "object",
+      "required": [
+        "claim_id", "judgment", "supporting_evidence_ids",
+        "opposing_evidence_ids", "conditions", "time_range", "confidence",
+        "limitations", "decision_implication"
+      ],
+      "properties": {
+        "claim_id": {"type": "string", "minLength": 1},
+        "judgment": {"type": "string", "minLength": 1},
+        "supporting_evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "opposing_evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "conditions": {"type": "string"},
         "time_range": {"type": "string"},
-        "confidence": {"enum": ["高", "中高", "中", "中低", "低"]},
+        "confidence": {"$ref": "#/$defs/confidence"},
+        "limitations": {"type": "array", "items": {"type": "string"}},
         "decision_implication": {"type": "string"}
-      }
+      },
+      "additionalProperties": true
     }
   },
   "additionalProperties": true

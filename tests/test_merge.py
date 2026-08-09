@@ -77,11 +77,14 @@ class MergeTests(unittest.TestCase):
                 "data_points", "screenshots", "controversies", "gaps"
             )}
             meta.update({
+                "schema_version": 2,
                 "chapter_id": "ch01",
                 "title": "第一章",
                 "reader_question": "问题",
                 "thesis": "结论",
                 "argument_role": "建立前提",
+                "sources": [],
+                "claims": [],
                 "chapter_conclusion": {},
             })
             draft.with_suffix(".meta.json").write_text(
@@ -96,6 +99,8 @@ class MergeTests(unittest.TestCase):
             self.assertNotIn("数据小表", assembled)
             combined = json.loads((root / "data" / "chapter_meta.json").read_text(encoding="utf-8"))
             self.assertEqual(combined[0]["chapter_id"], "ch01")
+            ledger = json.loads((root / "data" / "claim_ledger.json").read_text(encoding="utf-8"))
+            self.assertEqual(ledger["ledger_version"], 1)
 
     def test_require_meta_fails_before_writing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

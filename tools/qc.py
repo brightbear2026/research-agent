@@ -4,6 +4,7 @@
 用法:
   uv run python tools/qc.py [--root <项目根>] [--report <md>] [--skip-links]
       [--strict] [--depth 快速|标准|深度] [--citation-baseline <组装稿>]
+      [--claim-ledger <声明账本>]
 
 退出码：0 = 全部通过；1 = 发现问题。
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 import statistics
 import sys
@@ -18,6 +20,11 @@ from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
+
+try:
+    from tools.claim_ledger import audit_text
+except ModuleNotFoundError:  # 兼容直接执行 python tools/qc.py
+    from claim_ledger import audit_text
 
 SEARCH_HOSTS = {"google.com", "www.google.com", "bing.com", "www.bing.com",
                 "baidu.com", "www.baidu.com", "duckduckgo.com", "www.duckduckgo.com"}
@@ -185,7 +192,7 @@ def classify_url(url: str) -> tuple[str, str]:
             "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8",
         }) as c:
             r = c.head(url)
-            if r.status_code in (400, 405, 501):  # 部分站点对 HEAD 处理异常，回退 GET
+            if r.status_code in (400, 405, 412, 501):  # HEAD 可能不支持或缺少前置条件，回退 GET
                 r = c.get(url)
             host = urlparse(url).netloc
             if host in SEARCH_HOSTS:
@@ -193,8 +200,12 @@ def classify_url(url: str) -> tuple[str, str]:
             if 300 <= r.status_code < 400:
                 loc = r.headers.get("location", "")
                 return ("warn", f"重定向 {r.status_code} → {loc}")
-            # 400/401/403/429 通常是反爬/请求被拒/限流而非真死链
-            # （来源经研究期 WebFetch 或 Playwright 截图验证存在）
+            if r.status_code == 412:
+                body = r.text[:4096].lower()
+                access_markers = ("captcha", "验证码", "waf", "access denied", "bot challenge")
+                if any(marker in body for marker in access_markers):
+                    return ("warn", "HTTP 412（响应内容疑似访问控制，建议人工核）")
+                return ("warn", "HTTP 412（前置条件失败；原因未确认，不能统一视为反爬）")
             if r.status_code in (400, 401, 403, 429):
                 return ("warn", f"HTTP {r.status_code}（疑似反爬/限流/需鉴权，建议人工核）")
             if r.status_code >= 400:
@@ -389,6 +400,35 @@ def check_editor_baseline(report: Report, md_text: str, baseline_path: Path | No
         report.ok.append("编辑审计：未引入组装稿之外的引用")
 
 
+def check_claim_ledger(
+    report: Report,
+    md_text: str,
+    ledger_path: Path | None,
+    strict: bool,
+) -> None:
+    if ledger_path is None:
+        add_issue(report, "未提供声明账本，无法检查数字、日期、实体和确定性漂移", strict)
+        return
+    if not ledger_path.exists():
+        add_issue(report, f"找不到声明账本：{ledger_path}", strict)
+        return
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        result = audit_text(md_text, ledger)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        report.errors.append(f"无法读取声明账本：{exc}")
+        return
+    report.errors.extend(result["errors"])
+    for warning in result["warnings"]:
+        if "限制/不确定性" in warning:
+            add_issue(report, warning, strict)
+        else:
+            report.warnings.append(warning)
+    blocking_warning = strict and any("限制/不确定性" in item for item in result["warnings"])
+    if not result["errors"] and not blocking_warning:
+        report.ok.append("事实漂移审计：数字、日期、实体、确定性和限制条件未越界")
+
+
 def run(
     root: Path,
     report_md: Path,
@@ -397,6 +437,7 @@ def run(
     depth: str = "标准",
     skip_readability: bool = False,
     citation_baseline: Path | None = None,
+    claim_ledger: Path | None = None,
 ) -> int:
     rep = Report()
     if not report_md.exists():
@@ -414,6 +455,7 @@ def run(
     else:
         rep.ok.append("可读性检查：已跳过 (--skip-readability)")
     check_editor_baseline(rep, md_text, citation_baseline)
+    check_claim_ledger(rep, md_text, claim_ledger, strict)
     if not skip_links:
         check_links(rep, citations, figures)
     else:
@@ -439,12 +481,15 @@ def main() -> None:
     ap.add_argument("--skip-readability", action="store_true", help="跳过可读性检查")
     ap.add_argument("--citation-baseline", default=None,
                     help="总编辑前的组装稿；校验终稿未创造新引用")
+    ap.add_argument("--claim-ledger", default=None,
+                    help="编辑前声明账本；默认使用 <root>/data/claim_ledger.json")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     report_md = Path(args.report).resolve() if args.report else root / "report" / "research_report.md"
     baseline = Path(args.citation_baseline).resolve() if args.citation_baseline else None
+    ledger = Path(args.claim_ledger).resolve() if args.claim_ledger else root / "data" / "claim_ledger.json"
     sys.exit(run(root, report_md, args.skip_links, args.strict, args.depth,
-                 args.skip_readability, baseline))
+                 args.skip_readability, baseline, ledger))
 
 
 if __name__ == "__main__":

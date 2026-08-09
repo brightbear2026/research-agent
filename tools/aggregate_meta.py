@@ -1,301 +1,432 @@
 #!/usr/bin/env python3
-"""aggregate_meta.py — 从 chapter_meta.json 派生旁路索引 CSV（阶段五第 2 步）。
-
-确定性聚合，单一事实源：读取 data/chapter_meta.json（由 merge.py 汇总），
-生成三个旁路 CSV：
-  - data/source_data.csv        ← 各章 data_points
-  - evidence/evidence_matrix.csv ← 各章 chapter_conclusion
-  - evidence/controversy_matrix.csv ← 各章 controversies
-
-不为正文反向解析——矩阵内容直接来自 meta 的结构化字段。
-data_points / controversies 在各章字段名异构（claim/item、level/tier/
-source_grade、sources[]、positions{}），本脚本统一归一化。
-
-用法: uv run python tools/aggregate_meta.py --root <项目根> [--chapter-meta <相对路径>]
-"""
+"""校验 chapter_meta v2，并原子派生数据、证据与争议矩阵。"""
 from __future__ import annotations
 
 import argparse
 import csv
 import json
+import os
 import re
+import shutil
 import sys
+import tempfile
+from collections import Counter
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
-
-SD_HEADER = ["data_name", "value", "unit", "stat_time", "region",
-             "definition", "source", "source_org", "source_date",
-             "tier", "credibility", "notes"]
-EV_HEADER = ["conclusion_id", "core_conclusion", "supporting_evidence",
-             "opposing_evidence", "source_tier", "sufficiency", "final_judgment"]
-CT_HEADER = ["controversy_id", "question", "view_a", "supporters_a",
-             "view_b", "supporters_b", "evidence_comparison", "research_judgment"]
-
-# 中文语境 "A级" / 英文语境独立 "A"。注意 \b 在 "A级" 处无效（汉字也是 \w）。
-TIER_CN_RE = re.compile(r"([ABCD])\s*级")
-TIER_EN_RE = re.compile(r"(?<![A-Za-z])([ABCD])(?![A-Za-z])")
+from typing import Any
 
 
-def first_str(d: dict, *keys) -> str:
-    """返回 keys 中首个非空字符串值。"""
-    for k in keys:
-        v = d.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
-        if isinstance(v, list) and v:
-            joined = "; ".join(str(x) for x in v if x)
-            if joined.strip():
-                return joined
-    return ""
+SD_HEADER = [
+    "evidence_id", "claim_id", "data_name", "value", "unit", "stat_time",
+    "region", "population_or_scope", "definition", "source_ids", "source",
+    "source_org", "source_date", "tier", "credibility", "limitations", "notes",
+]
+EV_HEADER = [
+    "conclusion_id", "core_conclusion", "supporting_evidence",
+    "opposing_evidence", "source_tier", "sufficiency", "final_judgment",
+    "limitations",
+]
+CT_HEADER = [
+    "controversy_id", "question", "view_a", "supporters_a", "view_b",
+    "supporters_b", "evidence_comparison", "research_judgment",
+]
+OUTPUTS = (
+    ("data/source_data.csv", SD_HEADER),
+    ("evidence/evidence_matrix.csv", EV_HEADER),
+    ("evidence/controversy_matrix.csv", CT_HEADER),
+)
+CONFIDENCES = {"高", "中高", "中", "中低", "低"}
+NUMERIC_RE = re.compile(r"(?:^|[^A-Za-z])[-+]?\d+(?:[.,]\d+)?")
 
 
-def normalize_tier(*vals: str) -> str:
-    """专用字段（tier/level/source_grade/source_tier）统一为 A/B/C/D。
+@dataclass
+class ValidationResult:
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
-    专用字段可信裸字母（如 'A'）；也接受 'A级'。取不到留空。
-    """
-    for v in vals:
-        if not v:
+    def error(self, where: str, message: str) -> None:
+        self.errors.append(f"{where}: {message}")
+
+    def warn(self, where: str, message: str) -> None:
+        self.warnings.append(f"{where}: {message}")
+
+
+def _string(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value).strip()
+
+
+def _ids(value: Any) -> list[str]:
+    return [str(item).strip() for item in value] if isinstance(value, list) else []
+
+
+def _is_numeric(value: Any) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return True
+    return bool(NUMERIC_RE.search(value)) if isinstance(value, str) else False
+
+
+def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationResult]:
+    result = ValidationResult()
+    if not isinstance(document, list):
+        result.error("$", "合并元数据顶层必须是章节对象数组")
+        return [], result
+    chapters = [item for item in document if isinstance(item, dict)]
+    if len(chapters) != len(document):
+        result.error("$", "数组中存在非对象章节")
+    seen_chapters: set[str] = set()
+    for index, chapter in enumerate(chapters):
+        where = f"$[{index}]"
+        chapter_id = _string(chapter.get("chapter_id"))
+        if chapter.get("schema_version") != 2:
+            result.error(where, "schema_version 必须为 2；请先运行 migrate_chapter_meta.py")
+        if not re.fullmatch(r"ch\d{2}", chapter_id):
+            result.error(where, "chapter_id 必须匹配 chNN")
+        if chapter_id in seen_chapters:
+            result.error(where, f"chapter_id 重复：{chapter_id}")
+        seen_chapters.add(chapter_id)
+        for key in ("title", "reader_question", "thesis", "argument_role"):
+            if not _string(chapter.get(key)):
+                result.error(where, f"缺少非空字段 {key}")
+
+        sources = chapter.get("sources")
+        claims = chapter.get("claims")
+        evidence = chapter.get("data_points")
+        if not isinstance(sources, list):
+            result.error(where, "sources 必须是数组")
+            sources = []
+        if not isinstance(claims, list) or not claims:
+            result.error(where, "claims 必须是非空数组")
+            claims = []
+        if not isinstance(evidence, list):
+            result.error(where, "data_points 必须是数组")
+            evidence = []
+
+        source_ids = {_string(x.get("source_id")) for x in sources if isinstance(x, dict)}
+        evidence_ids = {_string(x.get("evidence_id")) for x in evidence if isinstance(x, dict)}
+        claim_ids = {_string(x.get("claim_id")) for x in claims if isinstance(x, dict)}
+        for label, values in (("source_id", source_ids), ("evidence_id", evidence_ids), ("claim_id", claim_ids)):
+            if "" in values:
+                result.error(where, f"存在空 {label}")
+        if len(source_ids) != len(sources):
+            result.error(where, "source_id 缺失或重复")
+        if len(evidence_ids) != len(evidence):
+            result.error(where, "evidence_id 缺失或重复")
+        if len(claim_ids) != len(claims):
+            result.error(where, "claim_id 缺失或重复")
+
+        for i, raw in enumerate(sources):
+            source_where = f"{where}.sources[{i}]"
+            if not isinstance(raw, dict):
+                result.error(source_where, "来源必须是对象")
+                continue
+            for key in ("source_id", "title", "url", "tier"):
+                if key not in raw:
+                    result.error(source_where, f"缺少字段 {key}")
+            if not _string(raw.get("title")):
+                result.error(source_where, "title 不得为空")
+            if raw.get("tier") not in {"A", "B", "C", "D", None}:
+                result.error(source_where, "tier 必须为 A/B/C/D/null")
+
+        for i, raw in enumerate(evidence):
+            item_where = f"{where}.data_points[{i}]"
+            if not isinstance(raw, dict):
+                result.error(item_where, "证据必须是对象")
+                continue
+            for key in ("evidence_id", "claim_id", "source_ids", "value", "unit", "stat_time", "region", "population_or_scope", "definition", "confidence", "limitations"):
+                if key not in raw:
+                    result.error(item_where, f"缺少字段 {key}")
+            if _string(raw.get("claim_id")) not in claim_ids:
+                result.error(item_where, f"引用不存在的 claim_id：{raw.get('claim_id')}")
+            refs = _ids(raw.get("source_ids"))
+            if not refs:
+                result.error(item_where, "source_ids 不得为空")
+            for ref in refs:
+                if ref not in source_ids:
+                    result.error(item_where, f"引用不存在的 source_id：{ref}")
+            if raw.get("confidence") not in CONFIDENCES:
+                result.error(item_where, "confidence 必须为 高/中高/中/中低/低")
+            if not isinstance(raw.get("limitations"), list):
+                result.error(item_where, "limitations 必须是数组")
+            if _is_numeric(raw.get("value")):
+                for field_name in ("unit", "stat_time"):
+                    if not _string(raw.get(field_name)):
+                        result.error(item_where, f"数值证据缺少 {field_name}")
+                if not _string(raw.get("region")) and not _string(raw.get("population_or_scope")):
+                    result.error(item_where, "数值证据必须填写 region 或 population_or_scope")
+
+        for i, raw in enumerate(claims):
+            claim_where = f"{where}.claims[{i}]"
+            if not isinstance(raw, dict):
+                result.error(claim_where, "声明必须是对象")
+                continue
+            if not _string(raw.get("text")):
+                result.error(claim_where, "text 不得为空")
+            for key in ("source_ids", "supporting_evidence_ids", "opposing_evidence_ids", "confidence", "limitations"):
+                if key not in raw:
+                    result.error(claim_where, f"缺少字段 {key}")
+            if raw.get("confidence") not in CONFIDENCES:
+                result.error(claim_where, "confidence 必须为 高/中高/中/中低/低")
+            if not isinstance(raw.get("limitations"), list):
+                result.error(claim_where, "limitations 必须是数组")
+            for ref in _ids(raw.get("source_ids")):
+                if ref not in source_ids:
+                    result.error(claim_where, f"引用不存在的 source_id：{ref}")
+            for key in ("supporting_evidence_ids", "opposing_evidence_ids"):
+                for ref in _ids(raw.get(key)):
+                    if ref not in evidence_ids:
+                        result.error(claim_where, f"{key} 引用不存在的 evidence_id：{ref}")
+
+        conclusion = chapter.get("chapter_conclusion")
+        cc_where = f"{where}.chapter_conclusion"
+        if not isinstance(conclusion, dict):
+            result.error(cc_where, "必须是对象")
             continue
-        m = TIER_CN_RE.search(v) or TIER_EN_RE.search(v)
-        if m:
-            return m.group(1)
-    return ""
+        for key in ("claim_id", "judgment", "supporting_evidence_ids", "opposing_evidence_ids", "conditions", "time_range", "confidence", "limitations", "decision_implication"):
+            if key not in conclusion:
+                result.error(cc_where, f"缺少字段 {key}")
+        if not _string(conclusion.get("judgment")):
+            result.error(cc_where, "judgment 不得为空")
+        if conclusion.get("confidence") not in CONFIDENCES:
+            result.error(cc_where, "confidence 必须为 高/中高/中/中低/低")
+        if not isinstance(conclusion.get("limitations"), list):
+            result.error(cc_where, "limitations 必须是数组")
+        cc_claim = _string(conclusion.get("claim_id"))
+        if cc_claim not in claim_ids:
+            result.error(cc_where, f"引用不存在的 claim_id：{cc_claim}")
+        support = _ids(conclusion.get("supporting_evidence_ids"))
+        if not support:
+            result.error(cc_where, "结论没有真实 supporting_evidence_ids；禁止用结论文本自证")
+        for key in ("supporting_evidence_ids", "opposing_evidence_ids"):
+            for ref in _ids(conclusion.get(key)):
+                if ref not in evidence_ids:
+                    result.error(cc_where, f"{key} 引用不存在的 evidence_id：{ref}")
+        if _string(conclusion.get("judgment")) in support:
+            result.error(cc_where, "结论文本不能作为 evidence_id")
+    return chapters, result
 
 
-def tier_from_haystack(s: str) -> str:
-    """源描述串里只信显式 'X级'，避免 'Series D'/'Model A' 等英文误判。"""
-    if not s:
-        return ""
-    m = TIER_CN_RE.search(s)
-    return m.group(1) if m else ""
+def _source_maps(chapter: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    sources = {str(item["source_id"]): item for item in chapter.get("sources", [])}
+    evidence = {str(item["evidence_id"]): item for item in chapter.get("data_points", [])}
+    return sources, evidence
 
 
-SRC_FIELDS = ("type", "author", "title", "publication", "date", "url", "access_date", "tier")
-
-
-def parse_src(tag: str) -> dict:
-    """解析 `[[SRC|类型|作者|标题|出版物|日期|url|访问日期|等级]]` → dict。
-
-    任一字段缺失留空。非 SRC 形态返回空 dict。
-    """
-    out = {k: "" for k in SRC_FIELDS}
-    if not isinstance(tag, str):
-        return out
-    s = tag.strip()
-    m = re.match(r"^\[\[SRC\|(.+)\]\]\s*$", s)
-    if not m:
-        return out
-    parts = [p.strip() for p in m.group(1).split("|")]
-    for i, key in enumerate(SRC_FIELDS):
-        if i < len(parts):
-            out[key] = parts[i]
-    return out
-
-
-def confidence_to_sufficiency(conf: str) -> str:
-    """confidence(高/中高/中/中低/低) → 充分度。"""
-    c = (conf or "").strip()
-    if c.startswith("高"):
-        return "充分"
-    if c.startswith("中高") or "中高" in c:
-        return "较充分"
-    if c.startswith("中") or "中等" in c:
-        return "中等"
-    if c.startswith("低") or "较弱" in c:
-        return "较弱"
-    return "中等"
-
-
-def domain_of(url: str) -> str:
-    """从 url 提取主域作为 source_org；失败留空。"""
-    if not url:
-        return ""
-    m = re.search(r"https?://([^/]+)/?", url)
-    if not m:
-        return ""
-    host = m.group(1)
-    host = host.replace("www.", "")
-    return host
-
-
-def write_csv(path: Path, header: list[str], rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=header)
-        w.writeheader()
-        for r in rows:
-            w.writerow({k: r.get(k, "") for k in header})
-
-
-def emit_source_data(chapters: list[dict]) -> list[dict]:
-    rows = []
-    for ch in chapters:
-        cid = ch.get("chapter_id", "")
-        for dp in ch.get("data_points", []) or []:
-            claim = first_str(dp, "claim", "item", "name", "point")
-            value = first_str(dp, "value")
-            # 源字符串：覆盖各章异构字段名（source/source_tag/source_citation/
-            # source_label/source_tag_url 等），优先列表其次单值
-            src = first_str(dp, "source", "source_tag", "source_citation",
-                            "source_label", "source_url", "sources")
-            parsed = parse_src(src)
-            url = first_str(dp, "url", "source_url", "source_tag_url") or parsed["url"]
-            if not url:
-                # 从 sources 列表里抓第一个 http 链接，或从源串里提 http
-                for s in (dp.get("sources") or []):
-                    if isinstance(s, str) and s.startswith("http"):
-                        url = s
-                        break
-                if not url and isinstance(src, str):
-                    mu = re.search(r"https?://\S+", src)
-                    if mu:
-                        url = mu.group(0).rstrip("])|,，")
-            # tier：专用字段优先（覆盖 tier/grade/evidence_level/source_tier/source_grade），
-            # 再取 SRC 标签内等级，最后扫描源串显式 'X级'
-            src_hay = " ".join(
-                str(x) for x in (dp.get("sources") or []) if x
-            ) + " " + src
-            tier = normalize_tier(
-                dp.get("tier", ""), dp.get("level", ""), dp.get("grade", ""),
-                dp.get("evidence_level", ""),
-                dp.get("source_tier", ""), dp.get("source_grade", ""),
-            ) or normalize_tier(parsed["tier"]) or tier_from_haystack(src_hay)
-            src_date = (parsed["date"] or
-                        first_str(dp, "source_date", "publish_date"))
-            credibility = first_str(dp, "confidence", "credibility")
-            note = first_str(dp, "verification", "note", "notes",
-                             "cross_check", "verified", "follow_up", "location")
+def emit_source_data(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for chapter in chapters:
+        source_map, _ = _source_maps(chapter)
+        claim_map = {str(c["claim_id"]): c for c in chapter.get("claims", [])}
+        for item in chapter.get("data_points", []):
+            source_ids = _ids(item.get("source_ids"))
+            linked = [source_map[sid] for sid in source_ids]
             rows.append({
-                "data_name": claim[:200],
-                "value": value,
-                "unit": "",
-                "stat_time": src_date,
-                "region": "",
-                "definition": note,
-                "source": src,
-                "source_org": domain_of(url) or first_str(dp, "source_org"),
-                "source_date": src_date,
-                "tier": tier,
-                "credibility": credibility,
-                "notes": f"[{cid}] {note}" if note else f"[{cid}]",
+                "evidence_id": _string(item.get("evidence_id")),
+                "claim_id": _string(item.get("claim_id")),
+                "data_name": _string(claim_map.get(_string(item.get("claim_id")), {}).get("text")),
+                "value": _string(item.get("value")),
+                "unit": _string(item.get("unit")),
+                "stat_time": _string(item.get("stat_time")),
+                "region": _string(item.get("region")),
+                "population_or_scope": _string(item.get("population_or_scope")),
+                "definition": _string(item.get("definition")),
+                "source_ids": "; ".join(source_ids),
+                "source": "; ".join(_string(s.get("url")) or _string(s.get("title")) for s in linked),
+                "source_org": "; ".join(dict.fromkeys(_string(s.get("organization")) for s in linked if _string(s.get("organization")))),
+                "source_date": "; ".join(dict.fromkeys(_string(s.get("publish_date")) for s in linked if _string(s.get("publish_date")))),
+                "tier": "; ".join(dict.fromkeys(_string(s.get("tier")) for s in linked if _string(s.get("tier")))),
+                "credibility": _string(item.get("confidence")),
+                "limitations": "; ".join(_ids(item.get("limitations"))),
+                "notes": f"[{chapter.get('chapter_id', '')}]",
             })
     return rows
 
 
-def emit_evidence(chapters: list[dict]) -> list[dict]:
-    rows = []
-    for ch in chapters:
-        cc = ch.get("chapter_conclusion") or {}
-        if not cc:
-            continue
-        cid = ch.get("chapter_id", "")
-        conf = cc.get("confidence", "")
-        judgment = cc.get("judgment", "")
-        conditions = cc.get("conditions", "")
-        # source_tier：扫描该章 data_points 取主流等级（专用字段优先，源串内显式 X级 兜底）
-        tiers = []
-        for dp in (ch.get("data_points") or []):
-            hay = " ".join(
-                str(x) for x in (dp.get("sources") or []) if x
-            ) + " " + first_str(dp, "source", "source_url")
-            tiers.append(normalize_tier(
-                dp.get("tier", ""), dp.get("level", ""),
-                dp.get("source_tier", ""), dp.get("source_grade", ""),
-            ) or tier_from_haystack(hay))
-        tiers = [t for t in tiers if t]
-        from collections import Counter
-        dom = Counter(tiers).most_common(1)
-        source_tier = dom[0][0] if dom else ""
-        final = judgment
-        if conditions:
-            final = f"{judgment} 【适用条件】{conditions}"
+def _sufficiency(source_records: list[dict[str, Any]], opposing_count: int, limitations: list[str]) -> str:
+    independent = {
+        _string(source.get("independence_group")) or _string(source.get("url")) or _string(source.get("source_id"))
+        for source in source_records
+    }
+    strong = sum(1 for source in source_records if source.get("tier") in {"A", "B"})
+    if not independent or strong == 0:
+        return "不足"
+    score = min(len(independent), 3) + min(strong, 2)
+    if opposing_count:
+        score -= 1
+    if limitations:
+        score -= 1
+    if score >= 4:
+        return "充分"
+    if score >= 3:
+        return "较充分"
+    return "有限"
+
+
+def emit_evidence(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for chapter in chapters:
+        source_map, evidence_map = _source_maps(chapter)
+        conclusion = chapter["chapter_conclusion"]
+        support_ids = _ids(conclusion.get("supporting_evidence_ids"))
+        oppose_ids = _ids(conclusion.get("opposing_evidence_ids"))
+        support = [evidence_map[item] for item in support_ids]
+        oppose = [evidence_map[item] for item in oppose_ids]
+        source_ids = list(dict.fromkeys(sid for item in support for sid in _ids(item.get("source_ids"))))
+        source_records = [source_map[sid] for sid in source_ids]
+        tiers = Counter(_string(item.get("tier")) for item in source_records if _string(item.get("tier")))
+        limitations = _ids(conclusion.get("limitations"))
+        judgment = _string(conclusion.get("judgment"))
+        conditions = _string(conclusion.get("conditions"))
         rows.append({
-            "conclusion_id": cid,
-            "core_conclusion": ch.get("thesis", judgment),
-            "supporting_evidence": ch.get("thesis", ""),
-            "opposing_evidence": cc.get("counter_evidence", ""),
-            "source_tier": f"{source_tier} 级为主" if source_tier else "见 citations.csv",
-            "sufficiency": confidence_to_sufficiency(conf),
-            "final_judgment": final,
+            "conclusion_id": _string(conclusion.get("claim_id")),
+            "core_conclusion": judgment,
+            "supporting_evidence": "; ".join(support_ids),
+            "opposing_evidence": "; ".join(oppose_ids),
+            "source_tier": "; ".join(f"{tier}:{count}" for tier, count in sorted(tiers.items())),
+            "sufficiency": _sufficiency(source_records, len(oppose), limitations),
+            "final_judgment": f"{judgment} 【适用条件】{conditions}" if conditions else judgment,
+            "limitations": "; ".join(limitations),
         })
     return rows
 
 
-def emit_controversies(chapters: list[dict]) -> list[dict]:
-    rows = []
-    for ch in chapters:
-        cid = ch.get("chapter_id", "")
-        for cv in ch.get("controversies", []) or []:
-            # researcher 显式标注不入矩阵（如 to_matrix:false）则跳过
-            if cv.get("to_matrix") is False:
+def _first(item: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, list):
+            text = "; ".join(_string(x) for x in value if _string(x))
+        else:
+            text = _string(value)
+        if text:
+            return text
+    return ""
+
+
+def emit_controversies(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for chapter in chapters:
+        for item in chapter.get("controversies", []):
+            if not isinstance(item, dict) or item.get("to_matrix") is False:
                 continue
-            # 视图 A/B 与支持来源：覆盖 side_a/position_a/pro/sides[]/positions{}
-            view_a = first_str(cv, "side_a", "position_a", "position_A", "pro")
-            view_b = first_str(cv, "side_b", "position_b", "position_B", "con")
-            sup_a = first_str(cv, "source_a", "side_a_sources", "evidence_a",
-                              "side_a_tier", "pro_sources")
-            sup_b = first_str(cv, "source_b", "side_b_sources", "evidence_b",
-                              "side_b_tier", "con_sources")
-            # sides 列表型：[立场A, 立场B, ...]
-            sides = cv.get("sides")
-            if isinstance(sides, list) and len(sides) >= 2 and not view_a:
-                view_a, view_b = str(sides[0]), str(sides[1])
-            # positions{} 字典型：把各立场拼成视图
-            positions = cv.get("positions")
-            if isinstance(positions, dict) and positions and not view_a:
-                items = list(positions.items())
-                if len(items) >= 1:
-                    view_a, sup_a = items[0][0], str(items[0][1])
-                if len(items) >= 2:
-                    view_b, sup_b = items[1][0], str(items[1][1])
-            evidence_cmp = first_str(cv, "caliber_difference", "evidence_tier",
-                                     "methodological_difference",
-                                     "root_cause_of_disagreement", "stakeholders")
-            judgment = first_str(cv, "resolution", "conditional_conclusion",
-                                 "resolution_status", "handling_in_this_chapter")
-            cid_full = cv.get("id") or f"{cid}-CV{len(rows)+1}"
             rows.append({
-                "controversy_id": cid_full,
-                "question": cv.get("topic") or cv.get("question") or "",
-                "view_a": view_a,
-                "supporters_a": sup_a,
-                "view_b": view_b,
-                "supporters_b": sup_b,
-                "evidence_comparison": evidence_cmp,
-                "research_judgment": judgment,
+                "controversy_id": _first(item, "id") or f"{chapter['chapter_id']}-CV-{len(rows)+1:03d}",
+                "question": _first(item, "topic", "question"),
+                "view_a": _first(item, "side_a", "position_a", "position_A", "pro"),
+                "supporters_a": _first(item, "source_a", "side_a_sources", "evidence_a", "pro_sources"),
+                "view_b": _first(item, "side_b", "position_b", "position_B", "con"),
+                "supporters_b": _first(item, "source_b", "side_b_sources", "evidence_b", "con_sources"),
+                "evidence_comparison": _first(item, "caliber_difference", "evidence_tier", "methodological_difference", "root_cause_of_disagreement"),
+                "research_judgment": _first(item, "resolution", "conditional_conclusion", "resolution_status"),
             })
     return rows
 
 
-def run(root: Path, meta_rel: str) -> int:
-    meta_path = root / meta_rel
-    if not meta_path.exists():
-        print(f"✗ 找不到 chapter_meta: {meta_path}", file=sys.stderr)
+def _write_csv(path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=header)
+        writer.writeheader()
+        writer.writerows({key: row.get(key, "") for key in header} for row in rows)
+
+
+def _backup_outputs(root: Path, paths: list[Path]) -> Path | None:
+    existing = [path for path in paths if path.exists()]
+    if not existing:
+        return None
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup = root / ".aggregate-backups" / stamp
+    for path in existing:
+        target = backup / path.relative_to(root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+    return backup
+
+
+def run(root: Path, meta_rel: str, *, dry_run: bool = False, force: bool = False) -> int:
+    root = root.resolve()
+    meta_path = (root / meta_rel).resolve()
+    backup: Path | None = None
+    replaced: list[Path] = []
+    try:
+        meta_path.relative_to(root)
+    except ValueError:
+        print(f"✗ chapter_meta 路径越界：{meta_path}", file=sys.stderr)
+        return 2
+    try:
+        document = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"✗ 无法读取 chapter_meta：{exc}", file=sys.stderr)
         return 1
-    with meta_path.open(encoding="utf-8") as f:
-        chapters = json.load(f)
+    chapters, validation = validate_chapters(document)
+    for warning in validation.warnings:
+        print(f"! {warning}", file=sys.stderr)
+    if validation.errors:
+        for error in validation.errors:
+            print(f"✗ {error}", file=sys.stderr)
+        print(f"✗ 聚合中止：{len(validation.errors)} 个错误；原 CSV 未修改", file=sys.stderr)
+        return 1
 
-    sd_rows = emit_source_data(chapters)
-    ev_rows = emit_evidence(chapters)
-    ct_rows = emit_controversies(chapters)
+    rows = (emit_source_data(chapters), emit_evidence(chapters), emit_controversies(chapters))
+    print(f"校验通过：{len(chapters)} 章，{len(rows[0])} 条证据，{len(rows[1])} 条结论，{len(rows[2])} 项争议")
+    if dry_run:
+        print("✓ dry-run 完成；未写入任何文件")
+        return 0
+    destinations = [root / rel for rel, _ in OUTPUTS]
+    existing = [path for path in destinations if path.exists()]
+    if existing and not force:
+        print("✗ 输出文件已存在；使用 --force 才会在备份后替换：", file=sys.stderr)
+        for path in existing:
+            print(f"  - {path}", file=sys.stderr)
+        return 2
 
-    write_csv(root / "data" / "source_data.csv", SD_HEADER, sd_rows)
-    write_csv(root / "evidence" / "evidence_matrix.csv", EV_HEADER, ev_rows)
-    write_csv(root / "evidence" / "controversy_matrix.csv", CT_HEADER, ct_rows)
-
-    print(f"✓ source_data.csv ← {len(sd_rows)} 条数据点")
-    print(f"✓ evidence_matrix.csv ← {len(ev_rows)} 条结论")
-    print(f"✓ controversy_matrix.csv ← {len(ct_rows)} 项争议")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="aggregate-meta-", dir=root))
+    try:
+        staged: list[Path] = []
+        for (rel, header), data in zip(OUTPUTS, rows):
+            staged_path = tmp_dir / rel
+            _write_csv(staged_path, header, data)
+            staged.append(staged_path)
+        backup = _backup_outputs(root, destinations) if force else None
+        for staged_path, destination in zip(staged, destinations):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(staged_path, destination)
+            replaced.append(destination)
+        if backup:
+            print(f"✓ 原文件备份：{backup}")
+    except OSError as exc:
+        if backup:
+            for destination in replaced:
+                saved = backup / destination.relative_to(root)
+                if saved.exists():
+                    shutil.copy2(saved, destination)
+                else:
+                    destination.unlink(missing_ok=True)
+        else:
+            for destination in replaced:
+                destination.unlink(missing_ok=True)
+        print(f"✗ 写入失败并已回滚：{exc}", file=sys.stderr)
+        return 1
+    finally:
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    print("✓ 三个派生 CSV 已原子替换")
     return 0
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="从 chapter_meta.json 派生旁路索引 CSV")
-    ap.add_argument("--root", default=".", help="项目根目录")
-    ap.add_argument("--chapter-meta", default="data/chapter_meta.json",
-                    help="chapter_meta.json 相对项目根的路径")
-    args = ap.parse_args()
-    sys.exit(run(Path(args.root).resolve(), args.chapter_meta))
+    parser = argparse.ArgumentParser(description="校验 chapter_meta v2 并派生旁路 CSV")
+    parser.add_argument("--root", default=".", help="项目根目录")
+    parser.add_argument("--chapter-meta", default="data/chapter_meta.json", help="相对项目根的路径")
+    parser.add_argument("--dry-run", action="store_true", help="只校验和统计，不写文件")
+    parser.add_argument("--force", action="store_true", help="备份后替换已有输出")
+    args = parser.parse_args()
+    raise SystemExit(run(Path(args.root).resolve(), args.chapter_meta, dry_run=args.dry_run, force=args.force))
 
 
 if __name__ == "__main__":

@@ -31,11 +31,13 @@ INDEXES: list[tuple[str, list[str]]] = [
         "fig_id", "title", "source_org", "source_doc", "url",
         "publish_date", "access_date", "page_or_location",
         "supports_conclusion", "is_primary_source", "local_path", "status",
+        "failure_category", "failure_reason", "alternative_url",
     ]),
     ("data/tables.csv", ["table_id", "title", "source", "notes"]),
     ("data/source_data.csv", [
-        "data_name", "value", "unit", "stat_time", "region",
-        "definition", "source", "source_org", "source_date", "tier", "credibility", "notes",
+        "evidence_id", "claim_id", "data_name", "value", "unit", "stat_time",
+        "region", "population_or_scope", "definition", "source_ids", "source",
+        "source_org", "source_date", "tier", "credibility", "limitations", "notes",
     ]),
     ("data/company_comparison.csv", [
         "dimension", "company_a", "company_b", "company_c", "company_d", "notes",
@@ -53,10 +55,11 @@ INDEXES: list[tuple[str, list[str]]] = [
         "fig_id", "url", "capture", "selector", "wait_ms", "local_path",
         "title", "source_org", "source_doc", "publish_date",
         "supports_conclusion", "is_primary_source",
+        "alternative_url",
     ]),
     ("evidence/evidence_matrix.csv", [
         "conclusion_id", "core_conclusion", "supporting_evidence",
-        "opposing_evidence", "source_tier", "sufficiency", "final_judgment",
+        "opposing_evidence", "source_tier", "sufficiency", "final_judgment", "limitations",
     ]),
     ("evidence/controversy_matrix.csv", [
         "controversy_id", "question", "view_a", "supporters_a",

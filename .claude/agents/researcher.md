@@ -38,24 +38,30 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
    同一来源再次引用，**原样复用同一标签文本**（调度方按 url 去重并统一分配 `[n]`）。类型如：论文/网页/财报/白皮书/政策/标准/专利/访谈/数据集。
 3. 草稿用行内标签区分事实/观点/判断，并在争议处简述双方。
 4. **禁止**在 Markdown 正文里出现「数据小表」「建议截图」「供 CSV」「待补充内容」或调度说明。数据点和截图需求只写入 `.meta.json`。
-5. `.meta.json` 至少包含：
+5. `.meta.json` 必须符合 `templates/chapter_meta.schema.json`（schema v2）。每条声明、证据和来源使用稳定 ID 显式关联；不得把声明文本复制成支撑证据。数值证据必须填写单位、统计时间，以及地区或适用范围；无法确认时写 `null` 并在 `limitations` 说明，但该章在补齐前不能通过聚合 QC。最小骨架：
    ```json
    {
+     "schema_version": 2,
      "chapter_id": "ch05",
      "title": "章节标题",
      "reader_question": "本章替读者回答什么问题",
      "thesis": "本章一句话结论",
      "argument_role": "本章在总论证中的作用",
+     "sources": [],
+     "claims": [],
      "data_points": [],
      "screenshots": [],
      "controversies": [],
      "gaps": [],
      "chapter_conclusion": {
+       "claim_id": "ch05-CONCLUSION",
        "judgment": "",
-       "counter_evidence": "",
+       "supporting_evidence_ids": [],
+       "opposing_evidence_ids": [],
        "conditions": "",
        "time_range": "",
        "confidence": "中",
+       "limitations": [],
        "decision_implication": ""
      }
    }

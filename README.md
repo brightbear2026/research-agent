@@ -2,8 +2,9 @@
 
 # research-agent · 深度研究代理 / Deep Research Agent
 
-**Claude Code 原生 · 科技/产业 · Playwright 真实截图**
-**Claude Code-native · Tech/Industry · Playwright real screenshots**
+**Claude Code + Codex/ChatGPT Work · 证据驱动 · Playwright 真实截图**
+
+**Claude Code + Codex/ChatGPT Work · Evidence-driven · Real Playwright screenshots**
 
 [中文](#中文) ｜ [English](#english)
 
@@ -13,9 +14,9 @@
 
 ## 中文
 
-把「深度课题研究与双格式报告生成」规范做成一个可复用的 **Claude Code 研究代理**。以 `/deep-research <课题>` 触发，按 **6 阶段**（调研 → 证据库 → 大纲 → 分章深研 → 双格式交付）产出 **Markdown + HTML** 报告与证据矩阵，严守：**不编造、来源分层、交叉验证、区分事实/观点/判断、真实可溯源截图**。
+一个同时支持 **Claude Code 与 Codex/ChatGPT Work** 的证据驱动深度研究代理。通过统一状态机执行六阶段流程，产出 **Markdown + HTML** 报告、证据矩阵、数据表与资料缺口清单，严守：**不编造、来源分层、交叉验证、声明—证据可追溯、真实截图**。
 
-- **实现形态**：Claude Code 原生（自定义 agent + 分阶段命令 + 辅助 Python 脚本）。
+- **双入口**：Claude Code 命令与 Codex/ChatGPT Work 技能共用同一状态机、schema v2、聚合器和 QC。
 - **领域定位**：科技/产业（Web 为主 + 企业官网/财报/白皮书/标准/政策）。
 - **截图**：Playwright 真实捕获（失败落占位，绝不伪造）。
 
@@ -32,6 +33,7 @@
 - **Python ≥ 3.13**
 - **[uv](https://docs.astral.sh/uv/)**（依赖管理）
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/overview)**（CLI 已挂载 WebSearch / WebFetch 等 Web 工具）
+- **Codex/ChatGPT Work**（可选，通过 `.codex/skills/deep-research-work` 入口使用）
 - **Playwright Chromium**（截图用，首次自动安装）
 
 ### 快速开始
@@ -60,11 +62,13 @@ uv run playwright install chromium   # 首次需要，约下载 ~150MB
 
 ### 六阶段流程
 
+流程由 `config/workflow_modes.yaml` 和 `tools/workflow_policy.py` 控制。`regular` 在前三阶段分别确认，`plan` 仅在大纲后确认并停止，`execution` 不设置仓库内确认点；所有模式都受外部访问控制和有限重试预算约束。
+
 1. **启动**：课题定义/边界、≥15 个研究问题、中英文关键词矩阵 → 检查点
 2. **广泛调研**：论文/人物/头部企业/政策标准/数据/案例 6 张清单 → 检查点
 3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再生成动态大纲 → 检查点
 4. **分章深研**：每章写「研究卡」，并行派发 `researcher`；读者正文与 `.meta.json` 分离
-5. **组装与总编辑**：标签去重 → 全局 `[n]` → `_assembled_report.md` → 总编辑压缩、去重、重组为终稿
+5. **组装与总编辑**：schema v2 与证据关系校验 → 生成声明账本 → 标签去重 → `_assembled_report.md` → 总编辑压缩、去重、重组 → 事实漂移审计
 6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py --strict`（含可读性）→ README
 
 ### 目录结构
@@ -87,11 +91,17 @@ tools/                              # 确定性工具（scaffold/screenshot/rend
 # 建交付目录树 + 空索引
 uv run python tools/scaffold.py projects/my-topic
 
-# 确定性组装（产出 _assembled_report.md + citations.csv）
+# 旧版 chapter_meta 无损迁移（输出 .v2.json，不覆盖原文件）
+uv run python tools/migrate_chapter_meta.py projects/my-topic/data/chapter_meta.json
+
+# 先校验，再备份并聚合旁路 CSV
+uv run python tools/aggregate_meta.py --root projects/my-topic --dry-run
+uv run python tools/aggregate_meta.py --root projects/my-topic --force
 uv run python tools/merge.py projects/my-topic --require-meta --title "报告标题"
 
 # Playwright 真实截图（读 manifest，写 figures.csv）
-uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
+uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv \
+  --root projects/my-topic --deadline-seconds 600
 
 # Markdown → 自包含 HTML（带目录导航/深色模式/打印样式/引用锚点）
 uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
@@ -101,7 +111,8 @@ uv run python tools/evidence.py --root projects/my-topic
 
 # 终检：引用闭环 + 链接 + 截图 + 可读性 + 编辑引用审计
 uv run python tools/qc.py --root projects/my-topic --strict \
-  --citation-baseline projects/my-topic/report/_assembled_report.md
+  --citation-baseline projects/my-topic/report/_assembled_report.md \
+  --claim-ledger projects/my-topic/data/claim_ledger.json
 
 # 自制图表（标题自动标注「数据来源：根据公开资料整理/计算」）
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -132,7 +143,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py --strict` 校验：正文 `[n]` ↔ citations.csv 闭环、图片对应、链接活性、内部材料残留、篇幅/句段长度以及总编辑未创造新引用。
+- `qc.py --strict` 校验：引用闭环、图片、链接、内部材料、可读性，以及总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
@@ -149,7 +160,8 @@ projects/my-topic/
 
 ### 研究限制
 
-- 付费墙 / JS 拦截页面无法抓取时，截图落占位、正文标「暂未找到可靠公开来源」，不臆造。
+- 截图只能写入项目 `images/`；PDF 下载限制字节数、页数、像素和总时间。429/部分 5xx 仅有限退避重试，登录、验证码、付费墙和 WAF 分别记录，不尝试绕过。
+- 外部页面无法抓取时，截图落占位、记录失败原因和替代来源，正文标「暂未找到可靠公开来源」，不臆造。
 - 一手原文优先；二手来源仅作线索，关键结论不依赖 C/D 级来源。
 - 数据截止与访问日期以报告 frontmatter 与 `citations.csv` 为准。
 - Playwright 浏览器版本须与 Python 包版本匹配（包 `1.62.0` ↔ build `1234`）；不匹配时报「Executable doesn't exist」，重跑 `uv run playwright install chromium` 即可。
@@ -158,9 +170,9 @@ projects/my-topic/
 
 ## English
 
-A reusable **Claude Code research agent** that operationalizes a "deep research + dual-format report" specification. Triggered by `/deep-research <topic>`, it runs a **6-phase pipeline** (research → evidence base → outline → per-chapter deep research → dual-format delivery) and produces **Markdown + HTML** reports with an evidence matrix — while strictly enforcing: **no fabrication, source tiering, cross-validation, fact/opinion/judgment distinction, and real traceable screenshots**.
+A reusable, evidence-driven research agent for **Claude Code and Codex/ChatGPT Work**. Both entry points share one executable six-phase state machine, schema v2, deterministic aggregation, claim-ledger editing audit, and strict QC. It delivers **Markdown + HTML** reports, evidence matrices, data tables, and disclosed research gaps.
 
-- **Form**: Claude Code-native (custom agent + staged command + helper Python scripts).
+- **Dual entry points**: Claude Code commands and a Codex/ChatGPT Work skill share the same workflow implementation.
 - **Domain**: Tech/Industry (Web-first + corporate sites / filings / whitepapers / standards / policy).
 - **Screenshots**: Playwright real capture (failures get an explicit placeholder, never faked).
 
@@ -177,6 +189,7 @@ A reusable **Claude Code research agent** that operationalizes a "deep research 
 - **Python ≥ 3.13**
 - **[uv](https://docs.astral.sh/uv/)** (dependency management)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/overview)** (CLI with WebSearch / WebFetch and other Web tools mounted)
+- **Codex/ChatGPT Work** (optional, via `.codex/skills/deep-research-work`)
 - **Playwright Chromium** (for screenshots; installed on first run)
 
 ### Quick Start
@@ -188,9 +201,11 @@ cd research-agent
 uv sync
 uv run playwright install chromium   # first run only, ~150MB download
 
-# 2) Trigger research inside Claude Code
-#    (run within a Claude Code session in this directory)
-/deep-research <your topic> depth=standard
+# 2a) Claude Code
+/deep-research <your topic> depth=standard mode=regular
+
+# 2b) Codex/ChatGPT Work
+# Invoke $deep-research-work in this workspace.
 ```
 
 Output lands in `projects/my-topic/` (renameable).

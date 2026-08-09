@@ -1,0 +1,37 @@
+version: 1
+
+phases:
+  - kickoff
+  - survey
+  - outline
+  - research
+  - assemble
+  - deliver
+
+modes:
+  regular:
+    label: 常规模式
+    auto_access_public_sources: true
+    confirmation_after: [kickoff, survey, outline]
+    stop_after: deliver
+  plan:
+    label: 计划模式
+    auto_access_public_sources: true
+    confirmation_after: [outline]
+    stop_after: outline
+  execution:
+    label: 执行模式
+    auto_access_public_sources: true
+    confirmation_after: []
+    stop_after: deliver
+
+budgets:
+  per_source_retries: 3
+  total_external_failures: 20
+  default_task_deadline_seconds: 3600
+
+external_failure_policy:
+  try_alternative_source: true
+  disclose_gap: true
+  bypass_access_controls: false
+  continue_after_recorded_gap: true

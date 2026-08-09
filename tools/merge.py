@@ -29,6 +29,11 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from tools.claim_ledger import build_ledger, write_ledger
+except ModuleNotFoundError:  # 兼容直接执行 python tools/merge.py
+    from claim_ledger import build_ledger, write_ledger
+
 TAG_RE = re.compile(r"\[\[SRC(?:\\?\|)(.*?)\]\]")
 URL_RE = re.compile(r"https?://[^\s|]+")
 TIER_RE = re.compile(r"\|([ABCD])\]\]\s*$")
@@ -44,6 +49,7 @@ INTERNAL_SECTION_RE = re.compile(
 )
 
 META_REQUIRED_KEYS = {
+    "schema_version", "sources", "claims",
     "chapter_id", "title", "reader_question", "thesis", "argument_role",
     "data_points", "screenshots", "controversies", "gaps", "chapter_conclusion",
 }
@@ -209,6 +215,8 @@ def main() -> int:
                 missing_keys = sorted(META_REQUIRED_KEYS - set(meta))
                 if missing_keys and args.require_meta:
                     raise ValueError(f"缺少字段: {missing_keys}")
+                if args.require_meta and meta.get("schema_version") != 2:
+                    raise ValueError("schema_version 必须为 2；旧元数据请先运行 migrate_chapter_meta.py")
                 meta["_draft_file"] = d.name
                 chapter_meta.append(meta)
             except (json.JSONDecodeError, ValueError) as e:
@@ -285,10 +293,16 @@ def main() -> int:
         json.dumps(chapter_meta, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+    claim_ledger_path = root / "data" / "claim_ledger.json"
+    write_ledger(
+        claim_ledger_path,
+        build_ledger(frontmatter + toc + body + tail, chapter_meta, str(report_md)),
+    )
 
     print(f"✓ 合并 {len(chapter_texts)} 章 → {report_md}")
     print(f"✓ 去重源标签 → {counter} 条引用写入 {citations_path}")
     print(f"✓ 汇总 {len(chapter_meta)} 份章节元数据 → {chapter_meta_path}")
+    print(f"✓ 生成编辑前声明账本 → {claim_ledger_path}")
     if missing_meta:
         print(f"  ⚠ 有 {len(missing_meta)} 章缺少同名 .meta.json（旧草稿兼容模式）")
     return 0
