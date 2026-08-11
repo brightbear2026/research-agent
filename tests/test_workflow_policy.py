@@ -10,8 +10,11 @@ from tools.workflow_policy import (
     initial_state,
     load_config,
     load_state,
+    next_incomplete_chapter,
     record_external_failure,
+    register_chapters,
     save_state,
+    update_chapter_status,
 )
 
 
@@ -27,6 +30,9 @@ class WorkflowPolicyTests(unittest.TestCase):
         while state["workflow_status"] == "running":
             guard += 1
             self.assertLess(guard, 20, "状态机不得无限循环")
+            if state["phase"] == "research":
+                state = register_chapters(state, ["ch01"])
+                state = update_chapter_status(state, "ch01", "completed")
             state, action = advance_state(state, self.config, confirmed=False)
             actions.append(action)
             if action == "needs_confirmation":
@@ -72,6 +78,34 @@ class WorkflowPolicyTests(unittest.TestCase):
             save_state(root, state)
             self.assertEqual(load_state(root)["mode"], "regular")
             self.assertEqual(list(root.glob("tmp*")), [])
+
+    def test_chapter_progress_resumes_at_first_incomplete_chapter(self) -> None:
+        state = initial_state("execution", self.config)
+        state = register_chapters(state, ["ch01", "ch02", "ch03"])
+        state = update_chapter_status(state, "ch01", "in_progress")
+        state = update_chapter_status(state, "ch01", "completed")
+        self.assertEqual(next_incomplete_chapter(state), "ch02")
+        self.assertEqual(state["chapter_progress"]["ch01"]["attempts"], 1)
+        resumed = register_chapters(state, ["ch01", "ch02", "ch03"])
+        self.assertEqual(resumed["chapter_progress"]["ch01"]["status"], "completed")
+
+    def test_completed_chapter_cannot_be_reopened(self) -> None:
+        state = register_chapters(initial_state("execution", self.config), ["ch01"])
+        state = update_chapter_status(state, "ch01", "completed")
+        with self.assertRaises(ValueError):
+            update_chapter_status(state, "ch01", "in_progress")
+
+    def test_research_phase_cannot_advance_with_incomplete_chapters(self) -> None:
+        state = initial_state("execution", self.config)
+        for _ in range(3):
+            state, _ = advance_state(state, self.config)
+        self.assertEqual(state["phase"], "research")
+        unchanged, action = advance_state(state, self.config)
+        self.assertIs(unchanged, state)
+        self.assertEqual(action, "chapters_not_registered")
+        state = register_chapters(state, ["ch01"])
+        _, action = advance_state(state, self.config)
+        self.assertEqual(action, "chapters_incomplete")
 
 
 if __name__ == "__main__":

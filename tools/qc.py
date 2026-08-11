@@ -23,8 +23,10 @@ from urllib.parse import urlparse
 
 try:
     from tools.claim_ledger import audit_text
+    from tools.source_identity import source_independence_key
 except ModuleNotFoundError:  # 兼容直接执行 python tools/qc.py
     from claim_ledger import audit_text
+    from source_identity import source_independence_key
 
 SEARCH_HOSTS = {"google.com", "www.google.com", "bing.com", "www.bing.com",
                 "baidu.com", "www.baidu.com", "duckduckgo.com", "www.duckduckgo.com"}
@@ -37,9 +39,22 @@ INTERNAL_MARKERS = (
     "建议截图登记",
 )
 
+BANNED_PHRASES = (
+    "众所周知",
+    "毫无疑问",
+    "必将",
+    "彻底改变",
+    "颠覆一切",
+    "市场前景无限",
+    "具有重大意义",
+)
+BOX_DRAWING_RE = re.compile(r"[┌┐└┘├┤┬┴┼─│╔╗╚╝╠╣╦╩╬═║▼▲▶◀]{3,}")
+ENGLISH_QUOTE_WORD_LIMIT = 25
+
 
 @dataclass(frozen=True)
 class ReadabilityProfile:
+    min_body_chars: int
     max_body_chars: int
     max_sentence_chars: int
     p90_sentence_chars: int
@@ -48,9 +63,9 @@ class ReadabilityProfile:
 
 
 READABILITY_PROFILES = {
-    "快速": ReadabilityProfile(20_000, 180, 90, 300, 3),
-    "标准": ReadabilityProfile(60_000, 220, 110, 400, 3),
-    "深度": ReadabilityProfile(100_000, 240, 120, 450, 4),
+    "快速": ReadabilityProfile(4_000, 20_000, 180, 90, 300, 3),
+    "标准": ReadabilityProfile(10_000, 60_000, 220, 110, 400, 3),
+    "深度": ReadabilityProfile(18_000, 100_000, 240, 120, 450, 4),
 }
 
 
@@ -91,6 +106,186 @@ def extract_citation_ids(md_text: str) -> set[int]:
     """提取叙事中的数字引用；忽略 fenced code，避免示例代码误报。"""
     without_fences = re.sub(r"```.*?```", "", md_text, flags=re.DOTALL)
     return {int(m.group(1)) for m in re.finditer(r"\[(\d{1,4})\]", without_fences)}
+
+
+def _without_code(md_text: str, *, keep_non_mermaid_fences: bool = False) -> str:
+    """移除代码块；检查框线图时只移除 Mermaid，以捕获 fenced ASCII 图。"""
+    if keep_non_mermaid_fences:
+        return re.sub(r"```mermaid\s*\n.*?```", "", md_text, flags=re.DOTALL | re.IGNORECASE)
+    return re.sub(r"```.*?```", "", md_text, flags=re.DOTALL)
+
+
+def check_fact_citation_locality(report: Report, md_text: str, strict: bool) -> None:
+    """每个带【事实】的正文段落必须在同一段内给出数字引用。"""
+    body = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", md_text, flags=re.DOTALL)
+    body = re.split(
+        r"(?m)^#{1,3}\s+(?:参考文献|证据与方法附件|附录)\s*$",
+        body,
+        maxsplit=1,
+    )[0]
+    body = _without_code(body)
+    missing: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", body):
+        if "【事实】" not in paragraph:
+            continue
+        units = [line for line in paragraph.splitlines() if "【事实】" in line and line.lstrip().startswith("|")]
+        if not units:
+            units = [paragraph]
+        for unit in units:
+            if not re.search(r"\[\d{1,4}\]", unit):
+                snippet = re.sub(r"\s+", " ", unit).strip()[:80]
+                missing.append(snippet)
+    if missing:
+        add_issue(
+            report,
+            f"{len(missing)} 个【事实】段落没有同段引用 [n]：{missing[:5]}",
+            strict,
+        )
+    else:
+        report.ok.append("事实就近引用：所有【事实】段落均有同段引用")
+
+
+def _english_word_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", text))
+
+
+def check_prohibited_content(report: Report, md_text: str, strict: bool) -> None:
+    """拦截写作禁忌、手画框线图和过长英文直接引语。"""
+    prose = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", md_text, flags=re.DOTALL)
+    prose = re.split(
+        r"(?m)^#{1,3}\s+(?:参考文献|证据与方法附件|附录)\s*$",
+        prose,
+        maxsplit=1,
+    )[0]
+    prose = _without_code(prose)
+    phrases = [phrase for phrase in BANNED_PHRASES if phrase in prose]
+    if phrases:
+        add_issue(report, f"正文含禁用无证据套话：{phrases}", strict)
+
+    ascii_candidate = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", md_text, flags=re.DOTALL)
+    ascii_candidate = re.split(
+        r"(?m)^#{1,3}\s+(?:参考文献|证据与方法附件|附录)\s*$",
+        ascii_candidate,
+        maxsplit=1,
+    )[0]
+    ascii_candidate = _without_code(ascii_candidate, keep_non_mermaid_fences=True)
+    frames = BOX_DRAWING_RE.findall(ascii_candidate)
+    if frames:
+        add_issue(report, f"正文含 {len(frames)} 处手画 ASCII/Unicode 框线图；请改用 Mermaid 或表格", strict)
+
+    quote_candidates: list[str] = []
+    for pattern in (r'"([^"\n]+)"', r"“([^”]+)”", r"「([^」]+)」"):
+        quote_candidates.extend(m.group(1) for m in re.finditer(pattern, prose, flags=re.DOTALL))
+    quote_candidates.extend(
+        re.sub(r"^>\s?", "", line)
+        for line in prose.splitlines()
+        if line.lstrip().startswith(">")
+    )
+    too_long = sorted(
+        {_english_word_count(quote) for quote in quote_candidates
+         if _english_word_count(quote) > ENGLISH_QUOTE_WORD_LIMIT},
+        reverse=True,
+    )
+    if too_long:
+        add_issue(
+            report,
+            f"英文直接引语超过 {ENGLISH_QUOTE_WORD_LIMIT} 词：最长 {too_long[0]} 词；请缩短并改为转述",
+            strict,
+        )
+    if not phrases and not frames and not too_long:
+        report.ok.append("内容禁忌：无禁用套话、框线图或过长英文直引")
+
+
+def check_evidence_independence(report: Report, root: Path, depth: str, strict: bool) -> None:
+    """从 chapter_meta 追踪结论到证据与来源，防止“有 ID 但无交叉验证”。"""
+    path = root / "data" / "chapter_meta.json"
+    if not path.exists():
+        add_issue(report, f"找不到章节元数据，无法检查独立来源：{path}", strict)
+        return
+    try:
+        chapters = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        report.errors.append(f"无法读取章节元数据并检查独立来源：{exc}")
+        return
+    if not isinstance(chapters, list):
+        report.errors.append("chapter_meta.json 顶层必须是数组")
+        return
+
+    minimum = 1 if depth == "快速" else 2
+    failures: list[str] = []
+    numeric_failures: list[str] = []
+    weak_tier_failures: list[str] = []
+    checked = 0
+    for chapter in chapters:
+        if not isinstance(chapter, dict):
+            continue
+        chapter_id = str(chapter.get("chapter_id") or "?")
+        sources = {
+            str(item.get("source_id")): item
+            for item in chapter.get("sources", [])
+            if isinstance(item, dict) and item.get("source_id")
+        }
+        evidence = {
+            str(item.get("evidence_id")): item
+            for item in chapter.get("data_points", [])
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+
+        def source_ids_for(evidence_ids: list[str], direct_ids: list[str] | None = None) -> list[str]:
+            source_ids = list(direct_ids or [])
+            for evidence_id in evidence_ids:
+                item = evidence.get(str(evidence_id), {})
+                source_ids.extend(str(x) for x in item.get("source_ids", []) if x)
+            return list(dict.fromkeys(source_ids))
+
+        def groups_for(evidence_ids: list[str], direct_ids: list[str] | None = None) -> set[str]:
+            return {
+                source_independence_key(sources[sid])
+                for sid in source_ids_for(evidence_ids, direct_ids)
+                if sid in sources
+            }
+
+        conclusion = chapter.get("chapter_conclusion") or {}
+        conclusion_groups = groups_for(conclusion.get("supporting_evidence_ids", []))
+        checked += 1
+        if len(conclusion_groups) < minimum:
+            failures.append(f"{chapter_id}:{conclusion.get('claim_id', '?')}={len(conclusion_groups)}/{minimum}")
+        conclusion_sources = source_ids_for(conclusion.get("supporting_evidence_ids", []))
+        if not any(sources[sid].get("tier") in {"A", "B"} for sid in conclusion_sources if sid in sources):
+            weak_tier_failures.append(f"{chapter_id}:{conclusion.get('claim_id', '?')}")
+
+        for claim in chapter.get("claims", []):
+            if not isinstance(claim, dict):
+                continue
+            linked = [evidence.get(str(eid), {}) for eid in claim.get("supporting_evidence_ids", [])]
+            is_numeric = bool(re.search(r"\d", str(claim.get("text") or ""))) or any(
+                isinstance(item.get("value"), (int, float))
+                or bool(re.search(r"\d", str(item.get("value") or "")))
+                for item in linked
+            )
+            if not is_numeric:
+                continue
+            groups = groups_for(
+                claim.get("supporting_evidence_ids", []),
+                [str(x) for x in claim.get("source_ids", [])],
+            )
+            if len(groups) < 2:
+                numeric_failures.append(f"{chapter_id}:{claim.get('claim_id', '?')}={len(groups)}/2")
+            numeric_sources = source_ids_for(
+                claim.get("supporting_evidence_ids", []),
+                [str(x) for x in claim.get("source_ids", [])],
+            )
+            if not any(sources[sid].get("tier") in {"A", "B"} for sid in numeric_sources if sid in sources):
+                weak_tier_failures.append(f"{chapter_id}:{claim.get('claim_id', '?')}")
+
+    if failures:
+        add_issue(report, f"章节重要结论独立来源不足：{failures}", strict)
+    if numeric_failures:
+        add_issue(report, f"数值声明未达到 2 个独立来源：{numeric_failures}", strict)
+    if weak_tier_failures:
+        add_issue(report, f"重要/数值声明仅由 C/D 级或未知来源支撑：{sorted(set(weak_tier_failures))}", strict)
+    if not failures and not numeric_failures and not weak_tier_failures:
+        report.ok.append(f"证据独立性：{checked} 个章节结论通过（最低 {minimum} 个独立来源）")
 
 
 def check_citations(
@@ -310,6 +505,13 @@ def check_readability(
     sentences = [s.strip() for s in re.split(r"[。！？!?]\s*", "\n".join(paragraphs)) if s.strip()]
     sentence_lengths = [len(s) for s in sentences]
 
+    if body_chars < profile.min_body_chars:
+        add_issue(
+            report,
+            f"正文约 {body_chars} 字符，低于 {depth} 档最低完整度 {profile.min_body_chars}；"
+            "请补齐核心论证、证据解释、反证和限制，不得用重复文字凑数",
+            strict,
+        )
     if body_chars > profile.max_body_chars:
         add_issue(
             report,
@@ -449,6 +651,9 @@ def run(
     figures = load_csv(root / "data" / "figures.csv")
 
     check_citations(rep, md_text, citations, root, strict)
+    check_fact_citation_locality(rep, md_text, strict)
+    check_prohibited_content(rep, md_text, strict)
+    check_evidence_independence(rep, root, depth, strict)
     check_figures(rep, md_text, figures, root, strict)
     if not skip_readability:
         check_readability(rep, md_text, depth, strict)

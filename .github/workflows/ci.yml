@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Check package/browser mapping
+        run: uv run python tools/check_env.py --skip-browser
+      - name: Run test suite
+        run: uv run python -m unittest discover -s tests -v

@@ -60,7 +60,20 @@ class AggregateTests(unittest.TestCase):
         rows = emit_evidence([chapter])
         self.assertEqual(rows[0]["supporting_evidence"], "E1; E2")
         self.assertNotEqual(rows[0]["supporting_evidence"], rows[0]["core_conclusion"])
+        self.assertEqual(rows[0]["independent_source_count"], "2")
+        self.assertEqual(rows[0]["strong_source_count"], "2")
         self.assertEqual(rows[0]["sufficiency"], "充分")
+
+    def test_same_parent_domain_is_not_counted_as_independent(self) -> None:
+        chapter = valid_chapter()
+        for source in chapter["sources"]:
+            source["independence_group"] = None
+            source["organization"] = None
+        chapter["sources"][0]["url"] = "https://news.example.com/a"
+        chapter["sources"][1]["url"] = "https://data.example.com/b"
+        row = emit_evidence([chapter])[0]
+        self.assertEqual(row["independent_source_count"], "1")
+        self.assertEqual(row["sufficiency"], "有限")
 
     def test_numeric_evidence_requires_qualifiers(self) -> None:
         chapter = valid_chapter()

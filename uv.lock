@@ -706,7 +706,7 @@ requires-dist = [
     { name = "markdown-it-py", specifier = ">=4.2.0" },
     { name = "matplotlib", specifier = ">=3.11.1" },
     { name = "pandas", specifier = ">=3.0.5" },
-    { name = "playwright", specifier = ">=1.62.0" },
+    { name = "playwright", specifier = "==1.62.0" },
     { name = "pymupdf", specifier = ">=1.28.2" },
     { name = "pyyaml", specifier = ">=6.0.3" },
 ]

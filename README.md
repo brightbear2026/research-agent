@@ -25,11 +25,13 @@
 - **Claude Code 与 Codex/ChatGPT Work 双入口**：两个入口调用同一套状态机和确定性工具，避免行为漂移。
 - **三种执行模式**：常规模式保留阶段确认；计划模式只产出计划；执行模式在仓库流程内连续运行到交付。
 - **机器可执行六阶段状态机**：模式、阶段、确认次数、停止条件和失败预算写入 `.research-workflow.json`，不只依赖提示词约定。
+- **逐章断点续跑**：阶段四登记 `chapter_progress`，中断后跳过已完成且产物配对有效的章节，从首个未完成章节继续。
 - **schema v2 证据语义**：声明、证据和来源使用稳定 ID 关联；数值必须保留单位、统计时间、地区或适用范围。
 - **禁止循环证据**：章节结论不能复制为自身支撑证据，重要结论必须追溯到真实 evidence ID 和 source ID。
 - **声明账本与编辑审计**：总编辑可以改写表达，但新增数字、日期、实体、因果关系、确定性升级或删除限制条件会被 QC 拦截。
 - **安全、真实的网页与 PDF 捕获**：限制输出目录、文件大小、PDF 页数、图片像素、重试次数和总时间；不隐藏自动化，不绕过登录、验证码、付费墙或 WAF。
 - **可审查交付物**：同时生成规范 Markdown、HTML、数据表、证据矩阵、争议矩阵、来源清单和资料缺口清单。
+- **严格 QC 是交付门禁**：事实标签必须同段引用，重要结论检查独立来源，禁用宣传套话和框线图，英文直接引语限制为 25 词，并阻止极短占位稿冒充正式交付。
 
 ### 三种运行模式（mode）
 
@@ -48,6 +50,11 @@
 - 截图必须来自 **Playwright 真实捕获**；失败则落明确标注的占位符，**禁止用 AI 图/拼接冒充原始截图**。
 - 区分 **事实 / 人物观点 / 机构观点 / 行业共识 / 争议 / 研究判断 / 推测**。
 - 关键数值类结论须 **≥2 独立来源**交叉验证；来源冲突时列口径/时间/机构，给**条件性结论**，不二选一。
+- `【事实】` 所在段落必须就近出现 `[n]`；禁用「众所周知 / 毫无疑问 / 必将 / 彻底改变 / 颠覆一切 / 市场前景无限 / 具有重大意义」。结构图用 Mermaid，禁止手画 ASCII/Unicode 框线图；英文直接引语最多 25 词，超出部分改为转述。
+
+### 适用领域边界
+
+默认规则针对科技/产业研究。医疗诊断与治疗、法律意见与诉讼策略、个人投资建议等高风险主题需要另行采用相应专业标准、最新法规/指南和合格专家复核；本项目的“QC 通过”不构成医疗、法律或投资专业意见。
 
 ### 环境要求
 
@@ -65,6 +72,7 @@ git clone https://github.com/brightbear2026/research-agent.git
 cd research-agent
 uv sync
 uv run playwright install chromium   # 首次需要，约下载 ~150MB
+uv run python tools/check_env.py      # 自动读取当前包所需的 Chromium build
 
 ```
 
@@ -105,15 +113,23 @@ Codex/ChatGPT Work 会读取同一份 `CLAUDE.md`、`config/workflow_modes.yaml`
 uv run python tools/workflow_policy.py status --root projects/my-topic
 ```
 
+阶段四中断后可查看下一章；已完成章节不会重复执行：
+
+```bash
+uv run python tools/workflow_policy.py next-chapter --root projects/my-topic
+```
+
 所有产出均落在独立的 `projects/<topic-slug>/`，不会覆盖其他课题。
 
 ### 深度旋钮（depth）
 
 | 取值 | 章节数 | 每个结论来源 | 截图 |
 |---|---|---|---|
-| `快速` | 3–5 个论证章节，约 1–2 万字 | ≥1 一级来源 | 按需 |
-| `标准`（默认） | 5–8 个论证章节，约 2–4 万字 | ≥2 一级来源 | 关键页强制 |
-| `深度` | 6–10 个论证章节，原则上 ≤6 万字 | 多轮交叉 | 全量 |
+| `快速` | 3–5 个论证章节，约 1–2 万字 | 重要结论 ≥1；数值声明仍须 ≥2 个独立来源 | 按需 |
+| `标准`（默认） | 5–8 个论证章节，约 2–4 万字 | 重要结论 ≥2 个独立来源，且至少含 A/B 级 | 关键页强制 |
+| `深度` | 6–10 个论证章节，原则上 ≤6 万字 | 标准要求 + 每章多轮交叉与反向验证 | 全量 |
+
+严格 QC 的最低正文完整度为快速 4,000、标准 10,000、深度 18,000 个去空白字符；这是防止占位稿通过的下限，不替代上表的目标篇幅和内容质量要求。
 
 ### 六阶段流程
 
@@ -122,7 +138,7 @@ uv run python tools/workflow_policy.py status --root projects/my-topic
 1. **启动**：课题定义/边界、≥15 个研究问题、中英文关键词矩阵 → 检查点
 2. **广泛调研**：论文/人物/头部企业/政策标准/数据/案例 6 张清单 → 检查点
 3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再生成动态大纲 → 检查点
-4. **分章深研**：每章写「研究卡」，并行派发 `researcher`；读者正文与 `.meta.json` 分离
+4. **分章深研**：登记逐章状态，按研究卡派发 `researcher`；读者正文与 `.meta.json` 分离，中断后从首个未完成章节恢复
 5. **组装与总编辑**：schema v2 与证据关系校验 → 生成声明账本 → 标签去重 → `_assembled_report.md` → 总编辑压缩、去重、重组 → 事实漂移审计
 6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py --strict`（含可读性）→ README
 
@@ -140,6 +156,7 @@ CLAUDE.md                           # 项目约定（红线/来源分层/标签/
 references/source_rubric.md         # 来源可信度 A/B/C/D 分级表
 templates/                          # 报告骨架、HTML 模板、元数据、研究卡、截图清单
 tools/                              # 状态机、迁移、聚合、声明账本、截图、渲染与 QC
+examples/minimal/                   # 可公开审查的最小交付样例
 ```
 
 ### 工具一览（统一前缀 `uv run python tools/xxx.py`）
@@ -147,6 +164,9 @@ tools/                              # 状态机、迁移、聚合、声明账本
 ```bash
 # 建交付目录树 + 空索引
 uv run python tools/scaffold.py projects/my-topic
+
+# 检查 Python、Playwright 包与当前 Chromium build
+uv run python tools/check_env.py
 
 # 旧版 chapter_meta 无损迁移（输出 .v2.json，不覆盖原文件）
 uv run python tools/migrate_chapter_meta.py projects/my-topic/data/chapter_meta.json
@@ -168,7 +188,7 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # 生成证据/争议矩阵 + 资料缺口
 uv run python tools/evidence.py --root projects/my-topic
 
-# 终检：引用闭环 + 链接 + 截图 + 可读性 + 编辑引用审计
+# 终检：引用闭环 + 独立来源 + 内容禁忌 + 截图 + 可读性 + 编辑事实审计
 uv run python tools/qc.py --root projects/my-topic --strict \
   --citation-baseline projects/my-topic/report/_assembled_report.md \
   --claim-ledger projects/my-topic/data/claim_ledger.json
@@ -202,7 +222,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py --strict` 校验：引用闭环、图片、链接、内部材料、可读性，以及总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件。
+- `qc.py --strict` 校验：引用闭环、事实标签同段引用、独立来源数量、图片、链接、内容禁忌、英文直接引语长度、分档最低完整度与可读性，以及总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件。最低完整度用于拦截占位稿，不是鼓励重复或凑字数。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
@@ -224,7 +244,13 @@ projects/my-topic/
 - 外部页面无法抓取时，截图落占位、记录失败原因和替代来源，正文标「暂未找到可靠公开来源」，不臆造。
 - 一手原文优先；二手来源仅作线索，关键结论不依赖 C/D 级来源。
 - 数据截止与访问日期以报告 frontmatter 与 `citations.csv` 为准。
-- Playwright 浏览器版本须与 Python 包版本匹配（包 `1.62.0` ↔ build `1234`）；不匹配时报「Executable doesn't exist」，重跑 `uv run playwright install chromium` 即可。
+- Playwright 固定为与驱动二进制耦合的版本；`tools/check_env.py` 会从当前安装包的 `browsers.json` 自动读取所需 Chromium build，不在文档中硬编码映射。不匹配时重跑 `uv run playwright install chromium`。
+
+### 样例、测试与许可证
+
+- [最小公开交付样例](examples/minimal/README.md)展示报告、引用、证据矩阵和资料缺口。
+- GitHub Actions 对锁定依赖、环境映射和完整单元测试做持续集成检查。
+- 项目采用 [MIT License](LICENSE)。
 
 ---
 
@@ -241,11 +267,13 @@ A reusable, evidence-driven research agent for **Claude Code and Codex/ChatGPT W
 - **Two entry points, one implementation**: Claude Code and Codex/ChatGPT Work use the same state machine, schema, aggregation, and QC tools.
 - **Three workflow modes**: regular checkpoints, plan-only delivery, or continuous execution.
 - **Executable six-phase policy**: phase, confirmation count, stop conditions, failures, and retry budgets are persisted instead of living only in prompts.
+- **Per-chapter resume**: phase-four progress survives interruptions and skips completed chapters with valid paired artifacts.
 - **Evidence semantics with schema v2**: stable claim, evidence, and source IDs; numeric evidence retains unit, statistical time, and region or scope.
 - **No circular evidence**: conclusion text cannot serve as its own support.
 - **Claim-ledger editing audit**: blocks new numbers, dates, entities, causal claims, certainty escalation, and loss of limitations.
 - **Bounded, compliant capture**: real browser/PDF capture with path, size, page, pixel, retry, and deadline limits; no access-control bypass.
 - **Reviewable deliverables**: Markdown, HTML, evidence and controversy matrices, data tables, source indexes, screenshots, and research gaps.
+- **Strict delivery gates**: local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
 
 ### Workflow Modes
 
@@ -264,6 +292,11 @@ Zero checkpoints in execution mode applies only to repository-defined content co
 - Screenshots must come from **real Playwright capture**; on failure an explicitly-labeled placeholder is written — **no AI images, no splicing, no fake originals**.
 - Clearly distinguish **fact / personal opinion / institutional view / industry consensus / dispute / research judgment / speculation**.
 - Key numeric conclusions require **≥2 independent sources**; on conflict, list caliber/time/institution and give a **conditional conclusion** — never pick one and hide the other.
+- A paragraph tagged `【事实】` must contain a local `[n]` citation. Promotional certainty phrases and hand-drawn ASCII/Unicode box diagrams are blocked; English direct quotations are limited to 25 words.
+
+### Domain Boundary
+
+The default rubric is designed for technology and industry research. Medical diagnosis or treatment, legal advice or litigation strategy, and personal investment advice require domain-specific current standards and qualified expert review. Passing this repository's QC is not professional medical, legal, or investment advice.
 
 ### Requirements
 
@@ -281,6 +314,7 @@ git clone https://github.com/brightbear2026/research-agent.git
 cd research-agent
 uv sync
 uv run playwright install chromium   # first run only, ~150MB download
+uv run python tools/check_env.py      # resolves the required browser build dynamically
 
 ```
 
@@ -312,6 +346,7 @@ Inspect a running workflow with:
 
 ```bash
 uv run python tools/workflow_policy.py status --root projects/my-topic
+uv run python tools/workflow_policy.py next-chapter --root projects/my-topic
 ```
 
 Each run writes to its own `projects/<topic-slug>/` directory.
@@ -320,16 +355,18 @@ Each run writes to its own `projects/<topic-slug>/` directory.
 
 | Value | Chapters | Sources per conclusion | Screenshots |
 |---|---|---|---|
-| `fast` (`快速`) | 3–5 argument chapters, ~10–20k Chinese chars | ≥1 primary | as needed |
-| `standard` (`标准`, default) | 5–8 argument chapters, ~20–40k Chinese chars | ≥2 primary | key pages forced |
-| `deep` (`深度`) | 6–10 argument chapters, normally ≤60k Chinese chars | multi-round cross-check | full |
+| `fast` (`快速`) | 3–5 argument chapters, ~10–20k Chinese chars | ≥1 for key conclusions; numeric claims still need ≥2 independent sources | as needed |
+| `standard` (`标准`, default) | 5–8 argument chapters, ~20–40k Chinese chars | ≥2 independent sources for key conclusions, including at least one A/B source | key pages forced |
+| `deep` (`深度`) | 6–10 argument chapters, normally ≤60k Chinese chars | standard requirements plus multi-round cross-checking and counter-evidence review | full |
+
+Strict QC uses minimum non-whitespace completeness floors of 4,000 / 10,000 / 18,000 characters for fast / standard / deep. These floors reject stubs; they do not replace the target ranges or evidence-quality requirements above.
 
 ### Six-Phase Pipeline
 
 1. **Kickoff**: scope/boundaries, ≥15 research questions, bilingual keyword matrix → checkpoint
 2. **Broad survey**: 6 lists (papers / people / leading companies / policy & standards / data / cases) → checkpoint
 3. **Argument map + outline**: define thesis, claims, dependencies and evidence before the dynamic outline → checkpoint
-4. **Per-chapter research**: dispatch `researcher` subagents; keep reader-facing Markdown separate from `.meta.json`
+4. **Per-chapter research**: persist chapter status, dispatch `researcher` workers, keep Markdown separate from `.meta.json`, and resume at the first incomplete chapter
 5. **Assemble + edit**: dedupe source tags → `_assembled_report.md` → constrained editor compresses and restructures the final narrative
 6. **Deliver**: screenshots → render HTML → evidence matrix → strict QC including readability → README
 
@@ -347,6 +384,7 @@ CLAUDE.md                           # Project conventions (red lines / tiers / t
 references/source_rubric.md         # A/B/C/D source credibility rubric
 templates/                          # report skeleton, HTML template, metadata, research card, screenshot manifest
 tools/                              # workflow, migration, aggregation, ledger, capture, rendering, and QC
+examples/minimal/                   # small public deliverable example
 ```
 
 ### Tools (common prefix `uv run python tools/xxx.py`)
@@ -354,6 +392,9 @@ tools/                              # workflow, migration, aggregation, ledger, 
 ```bash
 # Scaffold the delivery tree + empty indexes
 uv run python tools/scaffold.py projects/my-topic
+
+# Check Python, Playwright package, and the required Chromium build
+uv run python tools/check_env.py
 
 # Deterministic assembly (also writes chapter_meta and claim_ledger)
 uv run python tools/merge.py projects/my-topic --require-meta --title "Report title"
@@ -372,7 +413,7 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # Build evidence/controversy matrices + research gaps
 uv run python tools/evidence.py --root projects/my-topic
 
-# Final gate: citations + links + figures + readability + editor citation audit
+# Final gate: citations + evidence independence + content rules + figures + editing audit
 uv run python tools/qc.py --root projects/my-topic --strict \
   --citation-baseline projects/my-topic/report/_assembled_report.md \
   --claim-ledger projects/my-topic/data/claim_ledger.json
@@ -406,7 +447,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` is the deterministic assembly; `report/research_report.md` is the constrained editor's canonical final narrative.
 - Citations `[n]`, figures, and tables derive from `data/{citations,figures,tables}.csv`.
 - HTML is generated by `render_html.py` from Markdown + sidecar indexes — **never hand-author both versions**.
-- `qc.py --strict` verifies citation closure, figures, links, leaked process material, length/sentence/paragraph limits, and that editing introduced no new citation IDs.
+- `qc.py --strict` verifies citation closure, local citations for fact paragraphs, independent support, figures, links, prohibited content, quotation length, minimum completeness, readability, and factual drift after editing. Completeness floors block stubs; they are not targets for repetitive padding.
 
 ### Delivery Tree (created by `scaffold.py`)
 
@@ -427,7 +468,13 @@ projects/my-topic/
 - On paywalled / JS-blocked pages, the screenshot falls back to a placeholder and the body reads "no reliable public source found" — nothing is fabricated.
 - Primary sources are preferred; secondary sources are leads only and never the sole basis for a key conclusion.
 - Data cutoff and access dates follow the report frontmatter and `citations.csv`.
-- The Playwright browser build must match the Python package version (package `1.62.0` ↔ build `1234`); a mismatch reports "Executable doesn't exist" — just re-run `uv run playwright install chromium`.
+- Playwright is pinned because its driver and browser binary are coupled. `tools/check_env.py` reads the required Chromium build from the installed package instead of hardcoding the mapping in this README. Re-run `uv run playwright install chromium` on mismatch.
+
+### Example, CI, and License
+
+- See the [minimal public deliverable](examples/minimal/README.md).
+- GitHub Actions verifies locked dependencies, the package/browser mapping, and the full unit-test suite.
+- Licensed under the [MIT License](LICENSE).
 
 ---
 

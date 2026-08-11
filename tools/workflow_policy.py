@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -55,9 +56,57 @@ def initial_state(mode: str, config: dict[str, Any]) -> dict[str, Any]:
         "source_failures": {},
         "external_failures": [],
         "research_gaps": [],
+        "chapter_progress": {},
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+
+
+def register_chapters(state: dict[str, Any], chapter_ids: list[str]) -> dict[str, Any]:
+    """登记阶段四章节；幂等保留已完成状态，供中断后恢复。"""
+    invalid = [item for item in chapter_ids if not re.fullmatch(r"ch\d{2}", item)]
+    if invalid:
+        raise ValueError(f"章节 ID 必须匹配 chNN：{invalid}")
+    if len(set(chapter_ids)) != len(chapter_ids):
+        raise ValueError("章节 ID 不得重复")
+    updated = json.loads(json.dumps(state, ensure_ascii=False))
+    progress = updated.setdefault("chapter_progress", {})
+    for index, chapter_id in enumerate(chapter_ids):
+        current = progress.setdefault(chapter_id, {})
+        current.setdefault("status", "pending")
+        current.setdefault("attempts", 0)
+        current["order"] = index
+        current.setdefault("updated_at", now_iso())
+    updated["updated_at"] = now_iso()
+    return updated
+
+
+def update_chapter_status(state: dict[str, Any], chapter_id: str, status: str) -> dict[str, Any]:
+    if status not in {"pending", "in_progress", "completed", "failed"}:
+        raise ValueError(f"无效章节状态：{status}")
+    progress = state.get("chapter_progress", {})
+    if chapter_id not in progress:
+        raise ValueError(f"章节尚未登记：{chapter_id}")
+    updated = json.loads(json.dumps(state, ensure_ascii=False))
+    item = updated["chapter_progress"][chapter_id]
+    if item.get("status") == "completed" and status != "completed":
+        raise ValueError(f"已完成章节不能回退：{chapter_id}")
+    if status == "in_progress" and item.get("status") != "in_progress":
+        item["attempts"] = int(item.get("attempts", 0)) + 1
+    item["status"] = status
+    item["updated_at"] = now_iso()
+    updated["updated_at"] = now_iso()
+    return updated
+
+
+def next_incomplete_chapter(state: dict[str, Any]) -> str | None:
+    progress = state.get("chapter_progress", {})
+    candidates = [
+        (int(item.get("order", 0)), chapter_id)
+        for chapter_id, item in progress.items()
+        if item.get("status") != "completed"
+    ]
+    return min(candidates)[1] if candidates else None
 
 
 def advance_state(
@@ -72,6 +121,12 @@ def advance_state(
     mode = state["mode"]
     phase = state["phase"]
     policy = config["modes"][mode]
+    if phase == "research":
+        progress = state.get("chapter_progress", {})
+        if not progress:
+            return state, "chapters_not_registered"
+        if next_incomplete_chapter(state) is not None:
+            return state, "chapters_incomplete"
     needs_confirmation = phase in policy.get("confirmation_after", [])
     if needs_confirmation and not confirmed:
         return state, "needs_confirmation"
@@ -153,6 +208,11 @@ def save_state(root: Path, state: dict[str, Any]) -> None:
 
 
 def _print_state(state: dict[str, Any], action: str = "") -> None:
+    progress = state.get("chapter_progress", {})
+    chapter_counts: dict[str, int] = {}
+    for item in progress.values():
+        status = str(item.get("status", "pending"))
+        chapter_counts[status] = chapter_counts.get(status, 0) + 1
     payload = {
         "action": action,
         "mode": state.get("mode"),
@@ -162,6 +222,8 @@ def _print_state(state: dict[str, Any], action: str = "") -> None:
         "confirmation_count": state.get("confirmation_count"),
         "completed_phases": state.get("completed_phases"),
         "research_gap_count": len(state.get("research_gaps", [])),
+        "chapter_counts": chapter_counts,
+        "next_incomplete_chapter": next_incomplete_chapter(state),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -184,6 +246,15 @@ def main() -> int:
     failure.add_argument("--source", required=True)
     failure.add_argument("--reason", required=True)
     failure.add_argument("--alternative-url", default="")
+    register = sub.add_parser("register-chapters")
+    register.add_argument("--root", required=True)
+    register.add_argument("--chapter", action="append", required=True)
+    chapter = sub.add_parser("chapter")
+    chapter.add_argument("--root", required=True)
+    chapter.add_argument("--chapter", required=True)
+    chapter.add_argument("--status", choices=("pending", "in_progress", "completed", "failed"), required=True)
+    next_chapter = sub.add_parser("next-chapter")
+    next_chapter.add_argument("--root", required=True)
     args = parser.parse_args()
     try:
         config = load_config(Path(args.config).resolve())
@@ -201,7 +272,22 @@ def main() -> int:
         if args.command == "status":
             _print_state(state, "status")
             return 0
-        if args.command == "advance":
+        if args.command == "next-chapter":
+            _print_state(state, "next_chapter")
+            return 0
+        if args.command == "register-chapters":
+            updated = register_chapters(state, args.chapter)
+            action = "chapters_registered"
+        elif args.command == "chapter":
+            if args.status == "completed":
+                drafts = list((root / "report").glob(f"_draft_{args.chapter}_*.md"))
+                if not any(draft.with_suffix(".meta.json").exists() for draft in drafts):
+                    raise ValueError(
+                        f"章节 {args.chapter} 缺少配对的 .md 与 .meta.json，不能标记 completed"
+                    )
+            updated = update_chapter_status(state, args.chapter, args.status)
+            action = f"chapter_{args.status}"
+        elif args.command == "advance":
             updated, action = advance_state(state, config, confirmed=args.confirmed)
         else:
             updated, action = record_external_failure(
@@ -210,7 +296,11 @@ def main() -> int:
         if updated is not state:
             save_state(root, updated)
         _print_state(updated, action)
-        return 3 if action == "needs_confirmation" else 0
+        if action == "needs_confirmation":
+            return 3
+        if action in {"chapters_not_registered", "chapters_incomplete"}:
+            return 4
+        return 0
     except (OSError, json.JSONDecodeError, ValueError, KeyError) as exc:
         print(f"✗ workflow 状态处理失败：{exc}", file=sys.stderr)
         return 1

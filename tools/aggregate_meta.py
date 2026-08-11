@@ -16,6 +16,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    from tools.source_identity import source_independence_key
+except ModuleNotFoundError:
+    from source_identity import source_independence_key
+
 
 SD_HEADER = [
     "evidence_id", "claim_id", "data_name", "value", "unit", "stat_time",
@@ -24,7 +29,8 @@ SD_HEADER = [
 ]
 EV_HEADER = [
     "conclusion_id", "core_conclusion", "supporting_evidence",
-    "opposing_evidence", "source_tier", "sufficiency", "final_judgment",
+    "opposing_evidence", "source_tier", "independent_source_count",
+    "strong_source_count", "sufficiency", "final_judgment",
     "limitations",
 ]
 CT_HEADER = [
@@ -249,13 +255,12 @@ def emit_source_data(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def _sufficiency(source_records: list[dict[str, Any]], opposing_count: int, limitations: list[str]) -> str:
-    independent = {
-        _string(source.get("independence_group")) or _string(source.get("url")) or _string(source.get("source_id"))
-        for source in source_records
-    }
+    independent = {source_independence_key(source) for source in source_records}
     strong = sum(1 for source in source_records if source.get("tier") in {"A", "B"})
     if not independent or strong == 0:
         return "不足"
+    if len(independent) < 2:
+        return "有限"
     score = min(len(independent), 3) + min(strong, 2)
     if opposing_count:
         score -= 1
@@ -280,6 +285,8 @@ def emit_evidence(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
         source_ids = list(dict.fromkeys(sid for item in support for sid in _ids(item.get("source_ids"))))
         source_records = [source_map[sid] for sid in source_ids]
         tiers = Counter(_string(item.get("tier")) for item in source_records if _string(item.get("tier")))
+        independent = {source_independence_key(source) for source in source_records}
+        strong_count = sum(1 for source in source_records if source.get("tier") in {"A", "B"})
         limitations = _ids(conclusion.get("limitations"))
         judgment = _string(conclusion.get("judgment"))
         conditions = _string(conclusion.get("conditions"))
@@ -289,6 +296,8 @@ def emit_evidence(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
             "supporting_evidence": "; ".join(support_ids),
             "opposing_evidence": "; ".join(oppose_ids),
             "source_tier": "; ".join(f"{tier}:{count}" for tier, count in sorted(tiers.items())),
+            "independent_source_count": str(len(independent)),
+            "strong_source_count": str(strong_count),
             "sufficiency": _sufficiency(source_records, len(oppose), limitations),
             "final_judgment": f"{judgment} 【适用条件】{conditions}" if conditions else judgment,
             "limitations": "; ".join(limitations),

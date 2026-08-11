@@ -4,7 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.qc import Report, check_editor_baseline, check_figures, check_readability
+from tools.qc import (
+    Report,
+    check_editor_baseline,
+    check_evidence_independence,
+    check_fact_citation_locality,
+    check_figures,
+    check_prohibited_content,
+    check_readability,
+)
 
 
 class QCTests(unittest.TestCase):
@@ -41,6 +49,16 @@ class QCTests(unittest.TestCase):
         self.assertTrue(any("本章结论" in x for x in report.errors))
         self.assertTrue(any("对决策的含义" in x for x in report.errors))
 
+    def test_tiny_report_cannot_pass_strict_delivery(self) -> None:
+        report = Report()
+        check_readability(
+            report,
+            "# 第 1 章\n\n## 本章结论\n\n只有一句。\n\n## 对决策的含义\n\n观察。",
+            "快速",
+            strict=True,
+        )
+        self.assertTrue(any("最低完整度" in x for x in report.errors))
+
     def test_placeholder_figure_fails_in_strict_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -69,6 +87,55 @@ class QCTests(unittest.TestCase):
             report = Report()
             check_editor_baseline(report, "编辑后结论[1][2]。", baseline)
             self.assertTrue(any("不存在的引用" in x for x in report.errors))
+
+    def test_fact_tag_requires_citation_in_same_paragraph(self) -> None:
+        report = Report()
+        check_fact_citation_locality(
+            report,
+            "【事实】这是没有出处的事实。\n\n【事实】这是有出处的事实[1]。",
+            strict=True,
+        )
+        self.assertTrue(any("没有同段引用" in x for x in report.errors))
+
+    def test_banned_phrase_ascii_frame_and_long_quote_fail_strict_qc(self) -> None:
+        report = Report()
+        md = (
+            "毫无疑问，这项技术必将成功。\n\n"
+            "```text\n┌──┐\n│ A │\n└──┘\n```\n\n"
+            '原文称 "one two three four five six seven eight nine ten eleven twelve thirteen '
+            'fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two '
+            'twenty-three twenty-four twenty-five twenty-six"。'
+        )
+        check_prohibited_content(report, md, strict=True)
+        joined = "\n".join(report.errors)
+        self.assertIn("禁用", joined)
+        self.assertIn("框线图", joined)
+        self.assertIn("英文直接引语", joined)
+
+    def test_mermaid_box_characters_are_not_treated_as_ascii_frame(self) -> None:
+        report = Report()
+        check_prohibited_content(report, "```mermaid\nflowchart LR\n A-->B\n```", strict=True)
+        self.assertFalse(report.errors)
+
+    def test_chapter_conclusion_and_numeric_claim_need_independent_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            chapter = {
+                "chapter_id": "ch01",
+                "sources": [{"source_id": "S1", "url": "https://example.com/a", "independence_group": "甲"}],
+                "claims": [{"claim_id": "C1", "text": "规模为 10", "source_ids": ["S1"], "supporting_evidence_ids": ["E1"]}],
+                "data_points": [{"evidence_id": "E1", "value": 10, "source_ids": ["S1"]}],
+                "chapter_conclusion": {"claim_id": "C1", "supporting_evidence_ids": ["E1"]},
+            }
+            (root / "data" / "chapter_meta.json").write_text(
+                __import__("json").dumps([chapter], ensure_ascii=False), encoding="utf-8"
+            )
+            report = Report()
+            check_evidence_independence(report, root, "标准", strict=True)
+            joined = "\n".join(report.errors)
+            self.assertIn("重要结论", joined)
+            self.assertIn("数值声明", joined)
 
 
 if __name__ == "__main__":

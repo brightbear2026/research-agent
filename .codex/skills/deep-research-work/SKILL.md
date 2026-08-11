@@ -21,10 +21,13 @@ Run the six phases defined in `config/workflow_modes.yaml`: kickoff, survey, out
 After each phase, run `tools/workflow_policy.py advance --root <project>`.
 
 - If it returns `needs_confirmation`, ask for content confirmation and then run `advance --confirmed`.
+- If it returns `chapters_not_registered` or `chapters_incomplete` (exit 4), remain in phase four and repair chapter progress.
 - If it returns `stop`, stop. Plan mode must not enter formal research after the outline.
 - Execution mode contains no repository-defined confirmation point. System permissions, authentication, CAPTCHA, paywalls, and site access controls still apply.
 
 For unavailable sources, try a credible alternative, then record the failure with `record-failure`. Respect retry budgets and disclose the resulting gap; never loop indefinitely or bypass access controls.
+
+During the research phase, register every outline chapter with `register-chapters`. Before dispatching a chapter, mark it `in_progress`; after both the matching draft Markdown and `.meta.json` exist, mark it `completed`. On resume, call `next-chapter` and skip completed chapters. Do not advance to assembly until `next_incomplete_chapter` is null.
 
 ## Produce trustworthy metadata
 
@@ -35,6 +38,7 @@ Make every chapter `.meta.json` conform to `templates/chapter_meta.schema.json` 
 - Preserve value, unit, statistical time, region, population or scope, definition, confidence, and limitations.
 - For numeric evidence, missing unit, time, and region/scope is blocking.
 - Record supporting and opposing evidence explicitly.
+- Give standard/deep chapter conclusions at least two independent sources. Numeric claims always require two independent sources.
 
 Run `tools/aggregate_meta.py --dry-run` before `--force`. The force operation backs up existing CSV files before replacement.
 
@@ -48,4 +52,4 @@ Edit only for structure, compression, clarity, and deduplication. Preserve factu
 
 Use `tools/screenshot.py` with a finite deadline. Keep outputs under `images/`. Do not conceal browser automation or bypass login, CAPTCHA, paywalls, or WAF controls. Record failure category, reason, and alternative source.
 
-Generate HTML and evidence outputs, then run strict QC with both the assembled baseline and claim ledger. Delivery is complete only when required artifacts exist, strict QC passes, and the state machine reports `workflow_status=completed`.
+Generate HTML and evidence outputs, then run strict QC with both the assembled baseline and claim ledger. Strict QC also blocks uncited fact paragraphs, banned promotional phrases, hand-drawn box diagrams, overlong English quotations, stub-length reports, and insufficient independent support. Delivery is complete only when required artifacts exist, strict QC passes, and the state machine reports `workflow_status=completed`.

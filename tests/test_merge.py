@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.merge import TAG_RE, extract_url, main, normalize_tag_inner, parse_fields, strip_internal_sections
+from tools.merge import TAG_RE, extract_url, main, norm_key, normalize_tag_inner, parse_fields, strip_internal_sections
 
 
 class MergeTests(unittest.TestCase):
@@ -27,6 +27,21 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(fields[1], "机构")
         self.assertEqual(fields[5], "https://example.com/a")
         self.assertEqual(fields[7], "A")
+
+    def test_url_key_removes_tracking_fragment_and_normalizes_host(self) -> None:
+        first = "https://www.Example.com/report/?b=2&utm_source=news&a=1#page=3"
+        second = "http://example.com/report?a=1&b=2"
+        self.assertEqual(norm_key(first), norm_key(second))
+
+    def test_doi_and_arxiv_versions_are_canonicalized(self) -> None:
+        self.assertEqual(
+            norm_key("https://dx.doi.org/10.1000/ABC"),
+            norm_key("http://doi.org/10.1000/abc/"),
+        )
+        self.assertEqual(
+            norm_key("https://arxiv.org/pdf/2401.01234v2.pdf"),
+            norm_key("https://www.arxiv.org/abs/2401.01234"),
+        )
 
     def test_internal_sections_are_removed_but_reader_content_remains(self) -> None:
         draft = """# 第一章

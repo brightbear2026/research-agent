@@ -31,8 +31,10 @@ import yaml
 
 try:
     from tools.claim_ledger import build_ledger, write_ledger
+    from tools.source_identity import canonical_url_key
 except ModuleNotFoundError:  # 兼容直接执行 python tools/merge.py
     from claim_ledger import build_ledger, write_ledger
+    from source_identity import canonical_url_key
 
 TAG_RE = re.compile(r"\[\[SRC(?:\\?\|)(.*?)\]\]")
 URL_RE = re.compile(r"https?://[^\s|]+")
@@ -72,10 +74,7 @@ def extract_url(inner: str) -> str:
 
 
 def norm_key(url: str) -> str:
-    u = url.strip()
-    if not u:
-        return ""
-    return u.rstrip("/").lower()
+    return canonical_url_key(url)
 
 
 def parse_fields(inner: str) -> list[str]:
