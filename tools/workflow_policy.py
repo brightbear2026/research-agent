@@ -53,6 +53,7 @@ def initial_state(mode: str, config: dict[str, Any]) -> dict[str, Any]:
         "workflow_status": "running",
         "confirmation_count": 0,
         "completed_phases": [],
+        "completeness_debt": None,
         "source_failures": {},
         "external_failures": [],
         "research_gaps": [],
@@ -81,7 +82,13 @@ def register_chapters(state: dict[str, Any], chapter_ids: list[str]) -> dict[str
     return updated
 
 
-def update_chapter_status(state: dict[str, Any], chapter_id: str, status: str) -> dict[str, Any]:
+def update_chapter_status(
+    state: dict[str, Any],
+    chapter_id: str,
+    status: str,
+    *,
+    max_attempts: int | None = None,
+) -> dict[str, Any]:
     if status not in {"pending", "in_progress", "completed", "failed"}:
         raise ValueError(f"无效章节状态：{status}")
     progress = state.get("chapter_progress", {})
@@ -92,6 +99,12 @@ def update_chapter_status(state: dict[str, Any], chapter_id: str, status: str) -
     if item.get("status") == "completed" and status != "completed":
         raise ValueError(f"已完成章节不能回退：{chapter_id}")
     if status == "in_progress" and item.get("status") != "in_progress":
+        # 熔断：章节重派次数达上限则拒绝，防止卡死章节无限重派（35 轮式空转）。
+        if max_attempts is not None and int(item.get("attempts", 0)) >= max_attempts:
+            raise ValueError(
+                f"章节 {chapter_id} 的重派次数已达上限 {max_attempts}，不再重派；"
+                "请升级检索策略、放宽研究维度，或转资料缺口（record-failure）后继续"
+            )
         item["attempts"] = int(item.get("attempts", 0)) + 1
     item["status"] = status
     item["updated_at"] = now_iso()
@@ -224,6 +237,7 @@ def _print_state(state: dict[str, Any], action: str = "") -> None:
         "research_gap_count": len(state.get("research_gaps", [])),
         "chapter_counts": chapter_counts,
         "next_incomplete_chapter": next_incomplete_chapter(state),
+        "completeness_debt": state.get("completeness_debt"),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -255,6 +269,12 @@ def main() -> int:
     chapter.add_argument("--status", choices=("pending", "in_progress", "completed", "failed"), required=True)
     next_chapter = sub.add_parser("next-chapter")
     next_chapter.add_argument("--root", required=True)
+    record_debt = sub.add_parser("record-debt")
+    record_debt.add_argument("--root", required=True)
+    record_debt.add_argument(
+        "--from", dest="from_path", default=None,
+        help="qc_debt.json 路径；默认 <root>/data/qc_debt.json",
+    )
     args = parser.parse_args()
     try:
         config = load_config(Path(args.config).resolve())
@@ -285,10 +305,31 @@ def main() -> int:
                     raise ValueError(
                         f"章节 {args.chapter} 缺少配对的 .md 与 .meta.json，不能标记 completed"
                     )
-            updated = update_chapter_status(state, args.chapter, args.status)
+            max_attempts = int(config.get("budgets", {}).get("max_chapter_attempts", 0)) or None
+            updated = update_chapter_status(
+                state, args.chapter, args.status, max_attempts=max_attempts
+            )
             action = f"chapter_{args.status}"
         elif args.command == "advance":
             updated, action = advance_state(state, config, confirmed=args.confirmed)
+        elif args.command == "record-debt":
+            from_path = (
+                Path(args.from_path).resolve() if args.from_path
+                else root / "data" / "qc_debt.json"
+            )
+            data = json.loads(from_path.read_text(encoding="utf-8"))
+            summary = data.get("summary", {}) or {}
+            updated = json.loads(json.dumps(state, ensure_ascii=False))
+            updated["completeness_debt"] = {
+                "warnings": int(summary.get("warnings", 0)),
+                "errors": int(summary.get("errors", 0)),
+                "by_category": summary.get("by_category", {}) or {},
+                "core_passed": bool(data.get("core_passed")),
+                "source": str(from_path),
+                "at": now_iso(),
+            }
+            updated["updated_at"] = now_iso()
+            action = "debt_recorded"
         else:
             updated, action = record_external_failure(
                 state, config, args.source, args.reason, args.alternative_url

@@ -107,6 +107,47 @@ class WorkflowPolicyTests(unittest.TestCase):
         _, action = advance_state(state, self.config)
         self.assertEqual(action, "chapters_incomplete")
 
+    def test_chapter_attempts_cap_blocks_redispatch(self) -> None:
+        state = register_chapters(initial_state("execution", self.config), ["ch01"])
+        for _ in range(3):
+            state = update_chapter_status(state, "ch01", "in_progress")
+            state = update_chapter_status(state, "ch01", "failed")
+        self.assertEqual(state["chapter_progress"]["ch01"]["attempts"], 3)
+        with self.assertRaises(ValueError):
+            update_chapter_status(state, "ch01", "in_progress", max_attempts=3)
+        # 无上限（默认）仍可推进
+        state = update_chapter_status(state, "ch01", "in_progress")
+        self.assertEqual(state["chapter_progress"]["ch01"]["attempts"], 4)
+
+    def test_record_debt_subcommand_persists_completeness_debt(self) -> None:
+        import json
+        import sys
+        from tools import workflow_policy
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            save_state(root, initial_state("execution", self.config))
+            (root / "data").mkdir()
+            debt = {
+                "exit_code": 0, "core_passed": True,
+                "summary": {"errors": 0, "warnings": 3,
+                            "by_category": {"dead_links": 1, "staleness": 2}},
+                "debt": [],
+            }
+            (root / "data" / "qc_debt.json").write_text(json.dumps(debt), encoding="utf-8")
+            old_argv = sys.argv
+            sys.argv = ["workflow_policy.py", "record-debt", "--root", str(root)]
+            try:
+                rc = workflow_policy.main()
+            finally:
+                sys.argv = old_argv
+            self.assertEqual(rc, 0)
+            loaded = load_state(root)
+            self.assertIsNotNone(loaded["completeness_debt"])
+            self.assertEqual(loaded["completeness_debt"]["warnings"], 3)
+            self.assertEqual(loaded["completeness_debt"]["by_category"]["staleness"], 2)
+            self.assertTrue(loaded["completeness_debt"]["core_passed"])
+
 
 if __name__ == "__main__":
     unittest.main()

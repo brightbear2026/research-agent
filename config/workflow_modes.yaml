@@ -28,6 +28,7 @@ modes:
 budgets:
   per_source_retries: 3
   total_external_failures: 20
+  max_chapter_attempts: 3
   default_task_deadline_seconds: 3600
 
 external_failure_policy:

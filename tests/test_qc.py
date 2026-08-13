@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from tools.qc import (
     Report,
+    _categorize_warning,
+    _parse_year_month,
     check_editor_baseline,
     check_evidence_independence,
     check_fact_citation_locality,
     check_figures,
+    check_links,
+    check_numeric_claim_sourcing,
     check_prohibited_content,
     check_readability,
+    check_source_freshness,
+    run,
+    wayback_snapshot,
 )
 
 
@@ -136,6 +146,150 @@ class QCTests(unittest.TestCase):
             joined = "\n".join(report.errors)
             self.assertIn("重要结论", joined)
             self.assertIn("数值声明", joined)
+
+
+class WaybackAndLinkTests(unittest.TestCase):
+    def test_wayback_snapshot_returns_url_when_archived(self) -> None:
+        with patch("httpx.Client") as mock_client_cls:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {
+                "archived_snapshots": {
+                    "closest": {"available": True, "url": "http://web.archive.org/web/1/https://x.example"}
+                }
+            }
+            client = MagicMock()
+            client.__enter__.return_value = client
+            client.get.return_value = resp
+            mock_client_cls.return_value = client
+            self.assertEqual(
+                wayback_snapshot("https://x.example"),
+                "http://web.archive.org/web/1/https://x.example",
+            )
+
+    def test_wayback_snapshot_returns_none_when_no_archive_or_error(self) -> None:
+        with patch("httpx.Client") as mock_client_cls:
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = {"archived_snapshots": {}}
+            client = MagicMock()
+            client.__enter__.return_value = client
+            client.get.return_value = resp
+            mock_client_cls.return_value = client
+            self.assertIsNone(wayback_snapshot("https://x.example"))
+        # 网络异常优雅降级为 None
+        with patch("httpx.Client", side_effect=RuntimeError("boom")):
+            self.assertIsNone(wayback_snapshot("https://x.example"))
+
+    def test_dead_and_archived_links_are_warnings_not_errors(self) -> None:
+        def fake_classify(url: str) -> tuple[str, str]:
+            return {
+                "https://a.example": ("dead", "HTTP 404"),
+                "https://b.example": ("archived", "HTTP 410；Wayback 已归档：http://web.archive.org/x"),
+                "https://c.example": ("warn", "HTTP 403"),
+                "https://d.example": ("ok", "HTTP 200"),
+            }[url]
+
+        with patch("tools.qc.classify_url", side_effect=fake_classify):
+            report = Report()
+            citations = [
+                {"id": str(i), "url": u}
+                for i, u in enumerate(
+                    ["https://a.example", "https://b.example", "https://c.example", "https://d.example"], 1
+                )
+            ]
+            check_links(report, citations, [])
+        self.assertFalse(report.errors)
+        joined = "\n".join(report.warnings)
+        self.assertIn("死链 1 个", joined)
+        self.assertIn("已归档死链 1 个", joined)
+        self.assertIn("链接警告 1 个", joined)
+
+
+class FreshnessTests(unittest.TestCase):
+    def test_stale_fast_moving_ab_source_flagged_others_ignored(self) -> None:
+        citations = [
+            {"id": "1", "tier": "A", "url": "https://www.yolegroup.com/old",
+             "publish_date": "2024-01", "title": "Old Yole Report"},
+            {"id": "2", "tier": "A", "url": "https://www.yolegroup.com/new",
+             "publish_date": "2026-06", "title": "New Yole Report"},
+            {"id": "3", "tier": "C", "url": "https://www.yolegroup.com/c-tier",
+             "publish_date": "2019-01", "title": "C tier ignored"},
+            {"id": "4", "tier": "A", "url": "https://example.edu/research",
+             "publish_date": "2020-01", "title": "Non-fast domain ignored"},
+        ]
+        report = Report()
+        check_source_freshness(report, citations, strict=True, reference_date=datetime(2026, 8, 1))
+        joined = "\n".join(report.warnings)
+        self.assertIn("时效性", joined)
+        self.assertIn("Old Yole Report", joined)   # ~31 个月 > 18
+        self.assertNotIn("New Yole Report", joined)  # 新鲜
+        self.assertNotIn("C tier ignored", joined)   # 非 A/B
+        self.assertNotIn("Non-fast domain", joined)  # 非快变域名
+
+    def test_parse_year_month_handles_common_formats(self) -> None:
+        self.assertEqual(_parse_year_month("2024-06"), (2024, 6))
+        self.assertEqual(_parse_year_month("2024"), (2024, 1))
+        self.assertEqual(_parse_year_month("访问日期 2023/05/01"), (2023, 5))
+        self.assertIsNone(_parse_year_month("未注明"))
+        self.assertIsNone(_parse_year_month(None))
+
+
+class NumericSourcingTests(unittest.TestCase):
+    def test_single_cd_numeric_fact_flagged(self) -> None:
+        report = Report()
+        check_numeric_claim_sourcing(
+            report, "【事实】某公司投资 400 亿建厂[5]。", [{"id": "5", "tier": "C"}], strict=True
+        )
+        self.assertTrue(any("段落级数值声明" in w for w in report.warnings))
+
+    def test_second_source_clears_flag(self) -> None:
+        report = Report()
+        check_numeric_claim_sourcing(
+            report,
+            "【事实】某公司投资 400 亿建厂[5][6]。",
+            [{"id": "5", "tier": "C"}, {"id": "6", "tier": "B"}],
+            strict=True,
+        )
+        self.assertFalse(any("段落级数值声明" in w for w in report.warnings))
+
+    def test_ab_single_source_not_flagged(self) -> None:
+        report = Report()
+        check_numeric_claim_sourcing(
+            report, "【事实】规模 500 亿美元[7]。", [{"id": "7", "tier": "B"}], strict=True
+        )
+        self.assertFalse(any("段落级数值声明" in w for w in report.warnings))
+
+
+class QcDebtManifestTests(unittest.TestCase):
+    def test_categorize_warning_buckets(self) -> None:
+        self.assertEqual(_categorize_warning("死链 1 个：x"), "dead_links")
+        self.assertEqual(_categorize_warning("已归档死链 1 个：x"), "archived_links")
+        self.assertEqual(_categorize_warning("链接警告 1 个：x"), "link_warnings")
+        self.assertEqual(_categorize_warning("时效性：x"), "staleness")
+        self.assertEqual(_categorize_warning("段落级数值声明仅依赖单一 C/D 级来源"), "numeric_sourcing")
+        self.assertEqual(_categorize_warning("其他"), "other")
+
+    def test_run_always_writes_qc_debt_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            (root / "report").mkdir()
+            report_md = root / "report" / "research_report.md"
+            report_md.write_text("# 空报告\n\n几乎无内容。\n", encoding="utf-8")
+            for name in ("citations.csv", "figures.csv"):
+                (root / "data" / name).write_text("id\n", encoding="utf-8")
+            code = run(
+                root, report_md, skip_links=True, strict=False,
+                depth="快速", skip_readability=True,
+            )
+            debt_path = root / "data" / "qc_debt.json"
+            self.assertTrue(debt_path.exists())
+            manifest = json.loads(debt_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["exit_code"], code)
+            self.assertEqual(manifest["core_passed"], code == 0)
+            self.assertIn("by_category", manifest["summary"])
+            self.assertIsInstance(manifest["debt"], list)
 
 
 if __name__ == "__main__":

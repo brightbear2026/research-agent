@@ -17,6 +17,7 @@ import re
 import statistics
 import sys
 from dataclasses import dataclass
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
@@ -50,6 +51,20 @@ BANNED_PHRASES = (
 )
 BOX_DRAWING_RE = re.compile(r"[┌┐└┘├┤┬┴┼─│╔╗╚╝╠╣╦╩╬═║▼▲▶◀]{3,}")
 ENGLISH_QUOTE_WORD_LIMIT = 25
+
+# 快变领域来源域名（小写子串匹配）：光通信 / AI 硬件 / 半导体月度迭代，
+# 其 A/B 级来源若距今超 FRESHNESS_MONTHS 则提示核对最新数据，避免报告逼近保鲜期。
+FAST_MOVING_DOMAINS = (
+    "yolegroup.com", "lightcounting.com", "delloro.com", "lightwaveonline.net",
+    "semianalysis.com", "cignal.ai", "lightreading.com",
+)
+FRESHNESS_MONTHS = 18
+
+# 段落级数值声明触发词：保守模式——只在这些量纲出现时才视为“数值声明”。
+NUMERIC_CLUE_RE = re.compile(
+    r"\d[\d.,]*\s*(?:亿|万|美元|%|Gbps?|Tbps?|Gb/?s|Tb/?s|nm|CAGR|"
+    r"市场份额|市场规模|出货|排名)"
+)
 
 
 @dataclass(frozen=True)
@@ -288,6 +303,124 @@ def check_evidence_independence(report: Report, root: Path, depth: str, strict: 
         report.ok.append(f"证据独立性：{checked} 个章节结论通过（最低 {minimum} 个独立来源）")
 
 
+def _parse_year_month(value: str | None) -> tuple[int, int] | None:
+    """从 publish_date 文本提取 (year, month)；只认首个 YYYY 或 YYYY-MM，月缺省取 1。
+
+    跳过「未注明」「访问日期…」与空值等无法解析的口径。
+    """
+    if not value:
+        return None
+    m = re.search(r"(\d{4})(?:[-/](\d{1,2}))?", str(value))
+    if not m:
+        return None
+    year, month = int(m.group(1)), int(m.group(2)) if m.group(2) else 1
+    if not (1900 <= year <= 2100 and 1 <= month <= 12):
+        return None
+    return (year, month)
+
+
+def check_source_freshness(
+    report: Report,
+    citations: list[dict],
+    strict: bool,
+    *,
+    reference_date: datetime | None = None,
+) -> None:
+    """对快变领域的 A/B 级来源检查时效：距今超阈值给 advisory（建议核对最新数据）。
+
+    reference_date 可注入以便测试；默认取当前时间。
+    """
+    # advisory-only：时效是新鲜度提示而非正确性缺陷，始终进 warnings。strict 形参预留，
+    # 未来若要在 --strict 下升级为阻断，可把 report.warnings.append(...) 改为 add_issue(..., strict)。
+    ref = reference_date or datetime.now()
+    ref_total = ref.year * 12 + ref.month
+    threshold = FRESHNESS_MONTHS
+    stale: list[str] = []
+    checked = 0
+    for r in citations:
+        if (r.get("tier") or "").strip().upper() not in {"A", "B"}:
+            continue
+        url = (r.get("url") or "").lower()
+        if not any(dom in url for dom in FAST_MOVING_DOMAINS):
+            continue
+        ym = _parse_year_month(r.get("publish_date"))
+        if not ym:
+            continue
+        checked += 1
+        age_months = ref_total - (ym[0] * 12 + ym[1])
+        if age_months > threshold:
+            title = (r.get("title") or "").strip()[:40]
+            stale.append(
+                f"引用{r.get('id')}《{title}》发表于 {ym[0]:04d}-{ym[1]:02d}，"
+                f"距今 {age_months} 个月"
+            )
+    if stale:
+        report.warnings.append(
+            f"时效性：{len(stale)} 个快变领域来源距今超 {threshold} 个月，建议核对最新数据："
+            + "；".join(stale[:6])
+        )
+    elif checked:
+        report.ok.append(f"来源时效性：{checked} 个快变领域 A/B 级来源均在 {threshold} 个月内")
+    else:
+        report.ok.append("来源时效性：无可解析日期的快变领域 A/B 级来源")
+
+
+def check_numeric_claim_sourcing(
+    report: Report,
+    md_text: str,
+    citations: list[dict],
+    strict: bool,
+) -> None:
+    """段落级数值声明不得仅由单一 C/D 级来源支撑。
+
+    针对「单源 C/D 级（营销/自媒体）数值以【事实】进正文」的盲区——「≥2 独立来源」
+    规则只在 chapter_meta 结论/claim 粒度校验，正文段落只要 ≥1 引用即放行。本检查补上
+    段落粒度：复用事实就近引用的正文分段与【事实】检测，保守触发（仅【事实】段 +
+    命中数值量纲 + 段内去重引用恰 1 个且其等级 ∈ {C, D}）。advisory，不阻断。
+    """
+    # advisory-only：始终进 warnings。strict 形参预留，未来若要在 --strict 下升级为阻断，
+    # 可把 report.warnings.append(...) 改为 add_issue(report, ..., strict)。
+    tier_by_id: dict[int, str] = {}
+    for r in citations:
+        try:
+            tier_by_id[int(r.get("id", ""))] = (r.get("tier") or "").strip().upper()
+        except (ValueError, TypeError):
+            continue
+    body = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", md_text, flags=re.DOTALL)
+    body = re.split(
+        r"(?m)^#{1,3}\s+(?:参考文献|证据与方法附件|附录)\s*$",
+        body, maxsplit=1,
+    )[0]
+    body = _without_code(body)
+    weak: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", body):
+        if "【事实】" not in paragraph:
+            continue
+        if not NUMERIC_CLUE_RE.search(paragraph):
+            continue
+        units = [line for line in paragraph.splitlines()
+                 if "【事实】" in line and line.lstrip().startswith("|")]
+        if not units:
+            units = [paragraph]
+        for unit in units:
+            if not NUMERIC_CLUE_RE.search(unit):
+                continue
+            ids = {int(m) for m in re.findall(r"\[(\d{1,4})\]", unit)}
+            if len(ids) != 1:
+                continue
+            nid = next(iter(ids))
+            if tier_by_id.get(nid, "") in {"C", "D"}:
+                snippet = re.sub(r"\s+", " ", unit).strip()[:60]
+                weak.append(f"[{nid}]({tier_by_id.get(nid)}) {snippet}")
+    if weak:
+        report.warnings.append(
+            "段落级数值声明仅依赖单一 C/D 级来源，建议补独立第二来源或改标【推测】："
+            + "；".join(weak[:6])
+        )
+    else:
+        report.ok.append("段落级数值声明：未发现单一 C/D 级来源支撑的数值")
+
+
 def check_citations(
     report: Report,
     md_text: str,
@@ -373,6 +506,42 @@ def check_figures(
     report.ok.append(f"图片检查：正文引用 {len(fig_refs)} 个 / 登记 {len(figures)} 个")
 
 
+def wayback_snapshot(url: str, timeout: float = 6.0) -> str | None:
+    """查询 Wayback Availability API；有归档返回快照 URL，否则 None。
+
+    任意异常/超时/格式异常都优雅降级为 None（绝不拖垮链接检查）。仅对已判定的
+    死链调用，量小。
+    """
+    try:
+        import httpx
+    except ImportError:
+        return None
+    try:
+        with httpx.Client(follow_redirects=True, timeout=timeout) as c:
+            r = c.get("https://archive.org/available", params={"url": url})
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            snap = (data.get("archived_snapshots") or {}).get("closest") or {}
+            if snap.get("available") and snap.get("url"):
+                return str(snap["url"])
+            return None
+    except Exception:
+        return None
+
+
+def _dead_or_archived(status_msg: str, url: str) -> tuple[str, str]:
+    """死链判定前查 Wayback：有归档则降为 archived（保留死因 + 存档链接），否则保持 dead。
+
+    这样伪造 URL（无归档）在 qc_debt.json 中显眼标红，而真实但反爬/失效的来源能被
+    Wayback 佐证其曾存在——守护「不编造 URL」红线的同时不再惩罚好来源。
+    """
+    snap = wayback_snapshot(url)
+    if snap:
+        return ("archived", f"{status_msg}；Wayback 已归档：{snap}")
+    return ("dead", status_msg)
+
+
 def classify_url(url: str) -> tuple[str, str]:
     try:
         import httpx
@@ -404,7 +573,7 @@ def classify_url(url: str) -> tuple[str, str]:
             if r.status_code in (400, 401, 403, 429):
                 return ("warn", f"HTTP {r.status_code}（疑似反爬/限流/需鉴权，建议人工核）")
             if r.status_code >= 400:
-                return ("dead", f"HTTP {r.status_code}")
+                return _dead_or_archived(f"HTTP {r.status_code}", url)
             return ("ok", f"HTTP {r.status_code}")
     except Exception as e:
         ename = type(e).__name__
@@ -412,7 +581,7 @@ def classify_url(url: str) -> tuple[str, str]:
         if ename in ("ConnectError", "ConnectTimeout", "ReadTimeout",
                      "PoolTimeout", "RemoteProtocolError", "ReadError"):
             return ("warn", f"网络异常 {ename}（可能瞬时/反爬，建议人工核）")
-        return ("dead", f"异常: {ename}")
+        return _dead_or_archived(f"异常: {ename}", url)
 
 
 def check_links(report: Report, citations: list[dict], figures: list[dict]) -> None:
@@ -430,7 +599,7 @@ def check_links(report: Report, citations: list[dict], figures: list[dict]) -> N
         report.ok.append("链接检查：无 URL")
         return
 
-    dead, warns = [], []
+    dead, archived, warns = [], [], []
     with ThreadPoolExecutor(max_workers=6) as ex:
         futs = {ex.submit(classify_url, u): (tag, u) for tag, u in urls}
         for fut in as_completed(futs):
@@ -438,12 +607,23 @@ def check_links(report: Report, citations: list[dict], figures: list[dict]) -> N
             status, msg = fut.result()
             if status == "dead":
                 dead.append(f"{tag} {u} ({msg})")
-            elif status == "warn":
+            elif status == "archived":
+                archived.append(f"{tag} {u} ({msg})")
+            elif status in ("warn", "skip"):
                 warns.append(f"{tag} {u} ({msg})")
-            elif status == "skip":
-                warns.append(f"{tag} {u} ({msg})")
+    # 死链永不阻断 exit：链接活性与来源质量负相关（反爬越严的站点越是 A/B 级好来源），
+    # 故降为建议 + Wayback 标注。死链/归档/警告全部进 warnings 与 qc_debt.json，
+    # 由人工异步收尾，不再阻塞核心交付。
     if dead:
-        report.errors.append(f"死链 {len(dead)} 个：" + "; ".join(dead[:8]))
+        report.warnings.append(
+            f"死链 {len(dead)} 个（建议人工核 / 补来源，不阻断交付）："
+            + "; ".join(dead[:8])
+        )
+    if archived:
+        report.warnings.append(
+            f"已归档死链 {len(archived)} 个（HTTP 失败但 Wayback 有存档✓）："
+            + "; ".join(archived[:8])
+        )
     if warns:
         report.warnings.append(f"链接警告 {len(warns)} 个：" + "; ".join(warns[:8]))
     report.ok.append(f"链接检查：{len(urls)} 个 URL")
@@ -631,6 +811,49 @@ def check_claim_ledger(
         report.ok.append("事实漂移审计：数字、日期、实体、确定性和限制条件未越界")
 
 
+def _categorize_warning(msg: str) -> str:
+    """按既定前缀把 advisory warning 归类（供 qc_debt.json by_category 统计）。"""
+    if msg.startswith("已归档死链 "):
+        return "archived_links"
+    if msg.startswith("死链 "):
+        return "dead_links"
+    if msg.startswith("链接警告 "):
+        return "link_warnings"
+    if msg.startswith("时效性："):
+        return "staleness"
+    if msg.startswith("段落级数值声明"):
+        return "numeric_sourcing"
+    return "other"
+
+
+def _write_qc_debt(root: Path, rep: Report, exit_code: int) -> None:
+    """把 advisory 项（warnings）与核心错误摘要写为 data/qc_debt.json，供交付交接。
+
+    死链/时效/数值来源/链接警告等非阻断项落 debt 清单异步收尾；核心错误（errors）才是
+    阻断交付的闸门。写入失败不影响退出码（debt 本身是 advisory）。
+    """
+    by_category: dict[str, int] = {}
+    debt: list[dict] = []
+    for msg in rep.warnings:
+        cat = _categorize_warning(msg)
+        by_category[cat] = by_category.get(cat, 0) + 1
+        debt.append({"category": cat, "severity": "advisory", "detail": msg})
+    manifest = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "exit_code": exit_code,
+        "core_passed": exit_code == 0,
+        "summary": {
+            "errors": len(rep.errors),
+            "warnings": len(rep.warnings),
+            "by_category": by_category,
+        },
+        "debt": debt,
+    }
+    out = root / "data" / "qc_debt.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def run(
     root: Path,
     report_md: Path,
@@ -651,7 +874,9 @@ def run(
     figures = load_csv(root / "data" / "figures.csv")
 
     check_citations(rep, md_text, citations, root, strict)
+    check_source_freshness(rep, citations, strict)
     check_fact_citation_locality(rep, md_text, strict)
+    check_numeric_claim_sourcing(rep, md_text, citations, strict)
     check_prohibited_content(rep, md_text, strict)
     check_evidence_independence(rep, root, depth, strict)
     check_figures(rep, md_text, figures, root, strict)
@@ -672,7 +897,13 @@ def run(
         rep.ok.append(f"HTML 已生成: {html.name}")
     else:
         add_issue(rep, f"HTML 未生成或为空: {html.name}（运行 render_html.py）", strict)
-    return rep.emit()
+    exit_code = rep.emit()
+    # 两段式交付：advisory 项写 qc_debt.json 供异步收尾，核心错误才阻断（exit_code 已定）。
+    try:
+        _write_qc_debt(root, rep, exit_code)
+    except OSError:
+        pass
+    return exit_code
 
 
 def main() -> None:

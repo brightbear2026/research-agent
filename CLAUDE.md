@@ -21,7 +21,7 @@
 关键结论不得只依赖 C/D 级来源。
 
 ## 交叉验证
-一级数值类结论（市场规模/收入/用户/份额/融资/排名）须 **≥2 独立来源**。来源冲突时：列出各数据 + 口径 + 时间 + 机构，进 `evidence/controversy_matrix.csv`，给**条件性结论**，不得简单二选一。
+一级数值类结论（市场规模/收入/用户/份额/融资/排名）须 **≥2 独立来源**。来源冲突时：列出各数据 + 口径 + 时间 + 机构，进 `evidence/controversy_matrix.csv`，给**条件性结论**，不得简单二选一。正文【事实】段中的数值声明同样适用此规则——单一 C/D 级来源支撑的数值会被 `qc.py` 标记为 advisory（写入 `data/qc_debt.json`），建议补独立第二来源或改标【推测】。
 
 ## 行内标签（Markdown 与 HTML 共用，渲染器识别）
 - `【事实】` 客观事实（须有来源）
@@ -64,7 +64,7 @@ Skill 接收 `depth=快速|标准|深度`（默认「标准」）：
 - `screenshot.py <manifest.csv>`：真实截图（`full`/`viewport`/`element` 区块/`pdf` 指定页）+ 写 `figures.csv`。
 - `render_html.py <md> <out.html>`：渲染自包含 HTML。
 - `evidence.py`：生成证据/争议矩阵 + 资料缺口。
-- `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。
+- `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。核心检查 `exit 0` 即可交付；死链/链接警告/来源时效/段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json`（再用 `workflow_policy.py record-debt` 记入状态机）异步收尾。死链永不阻断——伪造 URL 无 Wayback 归档会在 debt 清单显眼标红。
 - `check_env.py`：从已安装 Playwright 包读取所需 Chromium build，并检查浏览器是否存在。
 - `charts.py`：生成图表到 `images/`。
 

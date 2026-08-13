@@ -25,13 +25,13 @@
 - **Claude Code 与 Codex/ChatGPT Work 双入口**：两个入口调用同一套状态机和确定性工具，避免行为漂移。
 - **三种执行模式**：常规模式保留阶段确认；计划模式只产出计划；执行模式在仓库流程内连续运行到交付。
 - **机器可执行六阶段状态机**：模式、阶段、确认次数、停止条件和失败预算写入 `.research-workflow.json`，不只依赖提示词约定。
-- **逐章断点续跑**：阶段四登记 `chapter_progress`，中断后跳过已完成且产物配对有效的章节，从首个未完成章节继续。
+- **逐章断点续跑 + 子代理熔断**：阶段四登记 `chapter_progress`，中断后跳过已完成且产物配对有效的章节，从首个未完成章节继续；`researcher` 连续 3 轮检索无新进展即返回（不自循环空转），章节重派达 `max_chapter_attempts`（默认 3）后被拒绝再派，防止卡死章节无限烧 token。
 - **schema v2 证据语义**：声明、证据和来源使用稳定 ID 关联；数值必须保留单位、统计时间、地区或适用范围。
 - **禁止循环证据**：章节结论不能复制为自身支撑证据，重要结论必须追溯到真实 evidence ID 和 source ID。
 - **声明账本与编辑审计**：总编辑可以改写表达，但新增数字、日期、实体、因果关系、确定性升级或删除限制条件会被 QC 拦截。
 - **安全、真实的网页与 PDF 捕获**：限制输出目录、文件大小、PDF 页数、图片像素、重试次数和总时间；不隐藏自动化，不绕过登录、验证码、付费墙或 WAF。
 - **可审查交付物**：同时生成规范 Markdown、HTML、数据表、证据矩阵、争议矩阵、来源清单和资料缺口清单。
-- **严格 QC 是交付门禁**：事实标签必须同段引用，重要结论检查独立来源，禁用宣传套话和框线图，英文直接引语限制为 25 词，并阻止极短占位稿冒充正式交付。
+- **两段式 QC 交付门禁**：核心检查（引用闭环、事实标签同段引用、独立来源、截图、漂移审计、可读性、内容禁忌）`exit 0` 即可交付；死链、链接警告、来源时效、段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json` 异步收尾。**死链永不阻断**——伪造 URL 无 Wayback 归档会在清单显眼标红，真实但反爬/失效的来源由 Wayback 存档佐证。新增段落级数值来源（单 C/D 级来源支撑的【事实】数值）与快变领域来源时效校验。
 
 ### 三种运行模式（mode）
 
@@ -140,7 +140,7 @@ uv run python tools/workflow_policy.py next-chapter --root projects/my-topic
 3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再生成动态大纲 → 检查点
 4. **分章深研**：登记逐章状态，按研究卡派发 `researcher`；读者正文与 `.meta.json` 分离，中断后从首个未完成章节恢复
 5. **组装与总编辑**：schema v2 与证据关系校验 → 生成声明账本 → 标签去重 → `_assembled_report.md` → 总编辑压缩、去重、重组 → 事实漂移审计
-6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py --strict`（含可读性）→ README
+6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py --strict`（核心检查 `exit 0` 即可交付；死链/时效/数值来源等 advisory 项写 `data/qc_debt.json`，不阻断）→ `workflow_policy.py record-debt` → README
 
 ### 目录结构
 
@@ -188,10 +188,13 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # 生成证据/争议矩阵 + 资料缺口
 uv run python tools/evidence.py --root projects/my-topic
 
-# 终检：引用闭环 + 独立来源 + 内容禁忌 + 截图 + 可读性 + 编辑事实审计
+# 终检（两段式）：核心检查 exit 0 即可交付；死链/时效/数值来源等 advisory 项写 data/qc_debt.json，不阻断
 uv run python tools/qc.py --root projects/my-topic --strict \
   --citation-baseline projects/my-topic/report/_assembled_report.md \
   --claim-ledger projects/my-topic/data/claim_ledger.json
+
+# 把 qc_debt.json 摘要记入状态机（completeness_debt），供交付交接
+uv run python tools/workflow_policy.py record-debt --root projects/my-topic
 
 # 自制图表（标题自动标注「数据来源：根据公开资料整理/计算」）
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -222,7 +225,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py --strict` 校验：引用闭环、事实标签同段引用、独立来源数量、图片、链接、内容禁忌、英文直接引语长度、分档最低完整度与可读性，以及总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件。最低完整度用于拦截占位稿，不是鼓励重复或凑字数。
+- `qc.py --strict` 是两段式门禁：核心检查（引用闭环、事实标签同段引用、独立来源数量、图片、内容禁忌、英文直接引语长度、分档最低完整度与可读性、总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件）须 `exit 0` 才可交付；死链、链接警告、快变领域来源时效、段落级数值来源等 advisory 项写入 `data/qc_debt.json`，不阻断。死链永不阻断——伪造 URL 无 Wayback 归档会在清单显眼标红。最低完整度用于拦截占位稿，不是鼓励重复或凑字数。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
@@ -267,13 +270,13 @@ A reusable, evidence-driven research agent for **Claude Code and Codex/ChatGPT W
 - **Two entry points, one implementation**: Claude Code and Codex/ChatGPT Work use the same state machine, schema, aggregation, and QC tools.
 - **Three workflow modes**: regular checkpoints, plan-only delivery, or continuous execution.
 - **Executable six-phase policy**: phase, confirmation count, stop conditions, failures, and retry budgets are persisted instead of living only in prompts.
-- **Per-chapter resume**: phase-four progress survives interruptions and skips completed chapters with valid paired artifacts.
+- **Per-chapter resume + subagent fuse**: phase-four progress survives interruptions and skips completed chapters with valid paired artifacts. A `researcher` returns after 3 consecutive rounds with no new verifiable source (no self-looping); chapters that hit `max_chapter_attempts` (default 3) are refused re-dispatch.
 - **Evidence semantics with schema v2**: stable claim, evidence, and source IDs; numeric evidence retains unit, statistical time, and region or scope.
 - **No circular evidence**: conclusion text cannot serve as its own support.
 - **Claim-ledger editing audit**: blocks new numbers, dates, entities, causal claims, certainty escalation, and loss of limitations.
 - **Bounded, compliant capture**: real browser/PDF capture with path, size, page, pixel, retry, and deadline limits; no access-control bypass.
 - **Reviewable deliverables**: Markdown, HTML, evidence and controversy matrices, data tables, source indexes, screenshots, and research gaps.
-- **Strict delivery gates**: local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
+- **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — a fabricated URL has no Wayback archive and surfaces red in the debt manifest. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
 
 ### Workflow Modes
 
@@ -368,7 +371,7 @@ Strict QC uses minimum non-whitespace completeness floors of 4,000 / 10,000 / 18
 3. **Argument map + outline**: define thesis, claims, dependencies and evidence before the dynamic outline → checkpoint
 4. **Per-chapter research**: persist chapter status, dispatch `researcher` workers, keep Markdown separate from `.meta.json`, and resume at the first incomplete chapter
 5. **Assemble + edit**: dedupe source tags → `_assembled_report.md` → constrained editor compresses and restructures the final narrative
-6. **Deliver**: screenshots → render HTML → evidence matrix → strict QC including readability → README
+6. **Deliver**: screenshots → render HTML → evidence matrix → strict QC (core checks `exit 0` = deliverable; dead links / freshness / paragraph-level numeric sourcing and other advisory items are written to `data/qc_debt.json`, never blocking) → `workflow_policy.py record-debt` → README
 
 ### Directory Layout
 
@@ -413,10 +416,14 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # Build evidence/controversy matrices + research gaps
 uv run python tools/evidence.py --root projects/my-topic
 
-# Final gate: citations + evidence independence + content rules + figures + editing audit
+# Final gate (two-phase): citations + evidence independence + content rules + figures + editing audit.
+# Core checks exit 0 = deliverable; advisory items (dead links / freshness / numeric sourcing) -> data/qc_debt.json (never blocking).
 uv run python tools/qc.py --root projects/my-topic --strict \
   --citation-baseline projects/my-topic/report/_assembled_report.md \
   --claim-ledger projects/my-topic/data/claim_ledger.json
+
+# Record advisory debt into the state machine after delivery
+uv run python tools/workflow_policy.py record-debt --root projects/my-topic
 
 # Self-made charts (auto-appends "Source: compiled/calculated from public data")
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -447,7 +454,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` is the deterministic assembly; `report/research_report.md` is the constrained editor's canonical final narrative.
 - Citations `[n]`, figures, and tables derive from `data/{citations,figures,tables}.csv`.
 - HTML is generated by `render_html.py` from Markdown + sidecar indexes — **never hand-author both versions**.
-- `qc.py --strict` verifies citation closure, local citations for fact paragraphs, independent support, figures, links, prohibited content, quotation length, minimum completeness, readability, and factual drift after editing. Completeness floors block stubs; they are not targets for repetitive padding.
+- `qc.py --strict` is a two-phase gate: core checks (citation closure, local citations for fact paragraphs, independent support, figures, prohibited content, quotation length, minimum completeness, readability, factual drift after editing) must `exit 0` to deliver; advisory items (dead links, link warnings, source freshness for fast-moving domains, paragraph-level numeric sourcing) are written to `data/qc_debt.json` and never block. Dead links never block — fabricated URLs have no Wayback archive and surface red in the debt manifest. Completeness floors block stubs; they are not targets for repetitive padding.
 
 ### Delivery Tree (created by `scaffold.py`)
 
