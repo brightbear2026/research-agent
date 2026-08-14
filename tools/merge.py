@@ -165,7 +165,7 @@ def build_refs_md(num_to_row: dict[int, dict]) -> str:
         line = ". ".join(s for s in seg if s)
         if extra:
             line += "（" + "；".join(extra) + "）"
-        items.append(f'<li value="{n}" id="ref-{n}">{line}. <a class="backref" href="#" onclick="history.back();return false;">↑ 返回正文</a></li>')
+        items.append(f'<li value="{n}" id="ref-{n}">{line}. <a class="backref" href="javascript:void(0)" onclick="goBackToCitation()">↑ 返回正文</a></li>')
     return "## 参考文献\n\n<ol>\n" + "\n".join(items) + "\n</ol>\n"
 
 

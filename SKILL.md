@@ -11,7 +11,12 @@ metadata:
     related_skills: []
 ---
 
-# Deep Research Agent v2
+# Deep Research Agent v2 (Hermes Port)
+
+> **Platform note**: This `SKILL.md` is a Hermes-platform port of the research-agent project.
+> The canonical Claude Code + Codex entry points are `.claude/commands/deep-research.md` and `.claude/skills/deep-research/SKILL.md`.
+> This file adapts the workflow for Hermes-specific tooling (`delegate_task`, `hermes chat -t file`, `clarify`).
+> If this port diverges from the canonical workflow, the canonical files take precedence.
 
 Six-phase deep research pipeline that produces Markdown + HTML dual-format reports with evidence matrices, claim-ledger audits, and workflow state machine. Domain: tech/industry. Enforces strict no-fabrication red lines, source tiering (A/B/C/D), cross-verification, claim-ledger drift detection, and real Playwright screenshots.
 
@@ -179,10 +184,10 @@ cd <skill_dir> && uv run python tools/qc.py --root projects/<slug> \
 
 ## Delivery Path
 
-All deep-research reports are delivered as a standalone folder under `/Users/zengqing/Documents/`:
+Reports are delivered as a standalone folder. By default, deliver to the user's preferred documents directory (or as specified by the user); otherwise use the project directory:
 
 ```
-/Users/zengqing/Documents/<报告名>/
+<delivery-dir>/<报告名>/
 ├── <报告名>.html          (self-contained HTML report)
 ├── <报告名>.md            (Markdown source)
 ├── README.md             (overview & chapter index)
@@ -271,4 +276,4 @@ Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 �
 - [ ] All inline images near supporting arguments
 - [ ] All diagrams use Mermaid
 - [ ] Workflow state machine reached `workflow_status=completed`
-- [ ] Report delivered to `/Users/zengqing/Documents/<报告名>/`
+- [ ] Report delivered to `<delivery-dir>/<报告名>/`

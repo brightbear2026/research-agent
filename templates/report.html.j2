@@ -11,12 +11,14 @@
     --primary:#1e3a8a; --primary-soft:#dbeafe; --accent:#0f766e;
     --tag-fact:#0f766e; --tag-opinion:#7c3aed; --tag-org:#1d4ed8;
     --tag-dispute:#b91c1c; --tag-judge:#a16207; --tag-guess:#6b7280;
+    --highlight-bg:rgba(15,118,110,.18); --highlight-flash:rgba(15,118,110,.4);
     --shadow:0 1px 3px rgba(0,0,0,.08);
   }
   [data-theme="dark"]{
     --bg:#0b0b0f; --bg-soft:#15151c; --card:#15151c; --border:#27272a;
     --text:#f4f4f5; --text-soft:#d4d4d8; --muted:#71717a;
     --primary:#93c5fd; --primary-soft:#1e293b; --accent:#5eead4;
+    --highlight-bg:rgba(94,234,212,.18); --highlight-flash:rgba(94,234,212,.4);
     --shadow:0 1px 3px rgba(0,0,0,.5);
   }
   *{box-sizing:border-box}
@@ -108,13 +110,13 @@
   sup.cite{font-size:.72em;line-height:0;vertical-align:super;margin-left:1px;white-space:nowrap}
   sup.cite a{color:var(--accent);font-weight:700}
   .references{font-size:13.5px}
-  .references ol,.references-section ol{padding-left:22px}
-  .references li,.references-section li[id^="ref-"]{margin:6px 0;color:var(--text-soft);word-break:break-word;padding:4px 6px;border-radius:4px;transition:background .3s}
-  li[id^="ref-"]:target{background:rgba(99,102,241,.18);outline:2px solid var(--accent);animation:flash 1.5s ease-out}
+  .references ol{padding-left:22px}
+  .references li{margin:6px 0;color:var(--text-soft);word-break:break-word;padding:4px 6px;border-radius:4px;transition:background .3s}
+  li[id^="ref-"]:target{background:var(--highlight-bg);outline:2px solid var(--accent);animation:flash 1.5s ease-out}
   li[id^="ref-"]:target .backref{opacity:1}
   .backref{font-size:11px;margin-left:6px;opacity:0;transition:opacity .3s;color:var(--accent);font-weight:700;text-decoration:none;white-space:nowrap}
   .backref:hover{text-decoration:underline}
-  @keyframes flash{0%{background:rgba(99,102,241,.4)}100%{background:rgba(99,102,241,.18)}}
+  @keyframes flash{0%{background:var(--highlight-flash)}100%{background:var(--highlight-bg)}}
 
   /* inline tags */
   .tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:4px;vertical-align:middle}
@@ -259,10 +261,29 @@
       ids.forEach(function(id){var el=document.getElementById(id); if(el) obs.observe(el);});
     }
   })();
-  // 引用跳转：将参考文献滚动到视口中央
+  // 引用跳转：记录出发点，将参考文献滚动到视口中央
   function centerRef(id){
     var el=document.getElementById(id);
     if(el){ el.scrollIntoView({behavior:'smooth',block:'center'}); }
+  }
+  // 记录点击引用时的出发点（滚动位置），供"返回正文"使用
+  document.addEventListener('click',function(e){
+    var a=e.target.closest('sup.cite a[href^="#ref-"]');
+    if(a){
+      sessionStorage.setItem('cite_origin',JSON.stringify({x:window.scrollX,y:window.scrollY}));
+    }
+  });
+  // "返回正文"按钮：回到上次点击引用时的位置
+  function goBackToCitation(){
+    var raw=sessionStorage.getItem('cite_origin');
+    if(raw){
+      var pos=JSON.parse(raw);
+      window.scrollTo({left:pos.x,top:pos.y,behavior:'smooth'});
+      sessionStorage.removeItem('cite_origin');
+    }else{
+      // 无记录时滚动到参考文献区域上方
+      window.scrollTo({top:0,behavior:'smooth'});
+    }
   }
   window.addEventListener('hashchange',function(){
     var h=location.hash;
