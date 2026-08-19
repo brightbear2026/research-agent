@@ -50,6 +50,13 @@ INDEXES: list[tuple[str, list[str]]] = [
         "doi", "research_question", "method", "dataset", "core_finding",
         "key_data", "limitations", "relevance", "citation_value",
     ]),
+    ("data/broker_report_list.csv", [
+        "source_id", "broker", "authors", "report_type", "title",
+        "covered_entity_or_industry", "publish_date", "forecast_horizon",
+        "rating", "target_price", "key_assumptions", "primary_data_sources",
+        "conflict_disclosure", "url", "access_date", "page_or_location",
+        "tier", "independence_group", "used_for", "limitations", "access_notes",
+    ]),
     ("data/source_index.csv", [
         "ref_id", "tier", "source_type", "author_org", "title", "url",
         "publish_date", "access_date", "used_for", "notes",
