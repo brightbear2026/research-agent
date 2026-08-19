@@ -57,7 +57,21 @@
         "organization": {"$ref": "#/$defs/nullableString"},
         "publish_date": {"$ref": "#/$defs/nullableString"},
         "tier": {"enum": ["A", "B", "C", "D", null]},
-        "independence_group": {"$ref": "#/$defs/nullableString"}
+        "independence_group": {"$ref": "#/$defs/nullableString"},
+        "source_type": {"$ref": "#/$defs/nullableString"},
+        "authors": {"type": "array", "items": {"type": "string"}},
+        "report_type": {"$ref": "#/$defs/nullableString"},
+        "covered_entity_or_industry": {"$ref": "#/$defs/nullableString"},
+        "page_or_location": {"$ref": "#/$defs/nullableString"},
+        "forecast_horizon": {"$ref": "#/$defs/nullableString"},
+        "key_assumptions": {"type": "array", "items": {"type": "string"}},
+        "primary_data_sources": {"type": "array", "items": {"type": "string"}},
+        "rating": {"$ref": "#/$defs/nullableString"},
+        "target_price": {"$ref": "#/$defs/nullableString"},
+        "conflict_disclosure": {"$ref": "#/$defs/nullableString"},
+        "access_date": {"$ref": "#/$defs/nullableString"},
+        "access_notes": {"$ref": "#/$defs/nullableString"},
+        "limitations": {"type": "array", "items": {"type": "string"}}
       },
       "additionalProperties": true
     },

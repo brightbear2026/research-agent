@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.aggregate_meta import emit_evidence, run, validate_chapters
+from tools.aggregate_meta import emit_broker_reports, emit_evidence, run, validate_chapters
 from tools.migrate_chapter_meta import migrate_chapter
 
 
@@ -87,6 +87,33 @@ class AggregateTests(unittest.TestCase):
         self.assertIn("缺少 stat_time", joined)
         self.assertIn("region 或 population_or_scope", joined)
 
+    def test_broker_report_is_emitted_with_research_context(self) -> None:
+        chapter = valid_chapter()
+        chapter["sources"][1].update({
+            "source_type": "broker_report",
+            "organization": "示例证券研究所",
+            "authors": ["分析师甲"],
+            "report_type": "行业深度",
+            "covered_entity_or_industry": "示例行业",
+            "forecast_horizon": "2025-2027",
+            "key_assumptions": ["需求保持增长"],
+            "conflict_disclosure": "见报告末页",
+            "access_date": "2026-08-19",
+            "page_or_location": "第 10-12 页",
+        })
+        syndicated_copy = dict(chapter["sources"][1])
+        syndicated_copy.update({
+            "source_id": "S3",
+            "url": "https://mirror.example/reposted-report",
+        })
+        chapter["sources"].append(syndicated_copy)
+        rows = emit_broker_reports([chapter])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["broker"], "示例证券研究所")
+        self.assertEqual(rows[0]["authors"], "分析师甲")
+        self.assertIn("ch01:C1", rows[0]["used_for"])
+        self.assertEqual(rows[0]["source_id"], "S2; S3")
+
     def test_validation_failure_does_not_overwrite_existing_csv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -109,6 +136,7 @@ class AggregateTests(unittest.TestCase):
             (root / "data" / "source_data.csv").write_text("old\n", encoding="utf-8")
             self.assertEqual(run(root, "data/chapter_meta.json", force=True), 0)
             self.assertTrue((root / "evidence" / "evidence_matrix.csv").exists())
+            self.assertTrue((root / "data" / "broker_report_list.csv").exists())
             backups = list((root / ".aggregate-backups").glob("*/data/source_data.csv"))
             self.assertEqual(len(backups), 1)
             with (root / "data" / "source_data.csv").open(encoding="utf-8") as handle:

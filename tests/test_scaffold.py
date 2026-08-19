@@ -35,6 +35,9 @@ class ScaffoldSafetyTests(unittest.TestCase):
             root = parent / "topic"
             scaffold(root, force=False, allowed_parent=parent)
             self.assertTrue((root / "report" / "research_report.md").exists())
+            broker_list = root / "data" / "broker_report_list.csv"
+            self.assertTrue(broker_list.exists())
+            self.assertIn("forecast_horizon", broker_list.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

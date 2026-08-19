@@ -17,7 +17,7 @@
 一个同时支持 **Claude Code 与 Codex/ChatGPT Work** 的证据驱动深度研究代理。通过统一状态机执行六阶段流程，产出 **Markdown + HTML** 报告、证据矩阵、数据表与资料缺口清单，严守：**不编造、来源分层、交叉验证、声明—证据可追溯、真实截图**。
 
 - **双入口**：Claude Code 命令与 Codex/ChatGPT Work 技能共用同一状态机、schema v2、聚合器和 QC。
-- **领域定位**：科技/产业（Web 为主 + 企业官网/财报/白皮书/标准/政策）。
+- **领域定位**：科技/产业（Web 为主 + 企业官网/财报/白皮书/标准/政策/券商与投行研报）。
 - **截图**：Playwright 真实捕获（失败落占位，绝不伪造）。
 
 ### 项目亮点
@@ -31,6 +31,7 @@
 - **声明账本与编辑审计**：总编辑可以改写表达，但新增数字、日期、实体、因果关系、确定性升级或删除限制条件会被 QC 拦截。
 - **安全、真实的网页与 PDF 捕获**：限制输出目录、文件大小、PDF 页数、图片像素、重试次数和总时间；不隐藏自动化，不绕过登录、验证码、付费墙或 WAF。
 - **可审查交付物**：同时生成规范 Markdown、HTML、数据表、证据矩阵、争议矩阵、来源清单和资料缺口清单。
+- **券商研报正式入库**：广泛调研主动覆盖券商/投行研报；章节元数据保留分析师、预测期、关键假设、评级/目标价与利益冲突，聚合为 `data/broker_report_list.csv`。预测作为机构观点，底层事实回溯原始来源。
 - **两段式 QC 交付门禁**：核心检查（引用闭环、事实标签同段引用、独立来源、截图、漂移审计、可读性、内容禁忌）`exit 0` 即可交付；死链、链接警告、来源时效、段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json` 异步收尾。**死链永不阻断**——伪造 URL 无 Wayback 归档会在清单显眼标红，真实但反爬/失效的来源由 Wayback 存档佐证。新增段落级数值来源（单 C/D 级来源支撑的【事实】数值）与快变领域来源时效校验。
 
 ### 三种运行模式（mode）
@@ -136,7 +137,7 @@ uv run python tools/workflow_policy.py next-chapter --root projects/my-topic
 流程由 `config/workflow_modes.yaml` 和 `tools/workflow_policy.py` 控制。`regular` 在前三阶段分别确认，`plan` 仅在大纲后确认并停止，`execution` 不设置仓库内确认点；所有模式都受外部访问控制和有限重试预算约束。
 
 1. **启动**：课题定义/边界、≥15 个研究问题、中英文关键词矩阵 → 检查点
-2. **广泛调研**：论文/人物/头部企业/政策标准/数据/案例 6 张清单 → 检查点
+2. **广泛调研**：论文/人物/头部企业/政策标准/数据/券商与投行研报/案例 7 张清单 → 检查点
 3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再生成动态大纲 → 检查点
 4. **分章深研**：登记逐章状态，按研究卡派发 `researcher`；读者正文与 `.meta.json` 分离，中断后从首个未完成章节恢复
 5. **组装与总编辑**：schema v2 与证据关系校验 → 生成声明账本 → 标签去重 → `_assembled_report.md` → 总编辑压缩、去重、重组 → 事实漂移审计
@@ -216,7 +217,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 | 等级 | 来源类型 | 工具映射 |
 |---|---|---|
 | **A 一级·原始** | 企业官网、年报财报、白皮书、产品文档、标准原文、政府政策、专利、原始演讲/访谈 | WebFetch / web_reader 抓官方 URL |
-| **B 二级·权威研究** | 智库、行业协会、分析师、高校、国际机构报告 | WebSearch + WebFetch |
+| **B 二级·权威研究** | 智库、行业协会、完整具名券商/投行研报、分析师、高校、国际机构报告 | WebSearch + WebFetch |
 | **C 三级·专业媒体** | 主流财经/科技/行业媒体深度报道 | WebSearch |
 | **D 四级·一般内容** | 自媒体、聚合站、论坛、匿名社媒、营销软文 | **仅作线索**，不作关键结论唯一依据 |
 
@@ -235,7 +236,7 @@ projects/my-topic/
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, source_index, screenshot_manifest}.csv,
+│        paper_list, broker_report_list, source_index, screenshot_manifest}.csv,
 │        {chapter_meta, claim_ledger}.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
@@ -246,6 +247,7 @@ projects/my-topic/
 - 截图只能写入项目 `images/`；PDF 下载限制字节数、页数、像素和总时间。429/部分 5xx 仅有限退避重试，登录、验证码、付费墙和 WAF 分别记录，不尝试绕过。
 - 外部页面无法抓取时，截图落占位、记录失败原因和替代来源，正文标「暂未找到可靠公开来源」，不臆造。
 - 一手原文优先；二手来源仅作线索，关键结论不依赖 C/D 级来源。
+- 券商研报中的评级、目标价与预测属于机构观点；同一报告的转载不重复计数，底层事实尽量回溯原始来源，访问受限内容不绕过权限或传播全文。
 - 数据截止与访问日期以报告 frontmatter 与 `citations.csv` 为准。
 - Playwright 固定为与驱动二进制耦合的版本；`tools/check_env.py` 会从当前安装包的 `browsers.json` 自动读取所需 Chromium build，不在文档中硬编码映射。不匹配时重跑 `uv run playwright install chromium`。
 
@@ -262,7 +264,7 @@ projects/my-topic/
 A reusable, evidence-driven research agent for **Claude Code and Codex/ChatGPT Work**. Both entry points share one executable six-phase state machine, schema v2, deterministic aggregation, claim-ledger editing audit, and strict QC. It delivers **Markdown + HTML** reports, evidence matrices, data tables, and disclosed research gaps.
 
 - **Dual entry points**: Claude Code commands and a Codex/ChatGPT Work skill share the same workflow implementation.
-- **Domain**: Tech/Industry (Web-first + corporate sites / filings / whitepapers / standards / policy).
+- **Domain**: Tech/Industry (Web-first + corporate sites / filings / whitepapers / standards / policy / broker research).
 - **Screenshots**: Playwright real capture (failures get an explicit placeholder, never faked).
 
 ### Highlights
@@ -276,6 +278,7 @@ A reusable, evidence-driven research agent for **Claude Code and Codex/ChatGPT W
 - **Claim-ledger editing audit**: blocks new numbers, dates, entities, causal claims, certainty escalation, and loss of limitations.
 - **Bounded, compliant capture**: real browser/PDF capture with path, size, page, pixel, retry, and deadline limits; no access-control bypass.
 - **Reviewable deliverables**: Markdown, HTML, evidence and controversy matrices, data tables, source indexes, screenshots, and research gaps.
+- **Broker research as a first-class input**: the survey actively covers sell-side reports; chapter metadata preserves analysts, forecast horizons, assumptions, ratings/targets, disclosures, and access limits, then aggregates used reports into `data/broker_report_list.csv`. Forecasts remain institutional views and underlying facts are traced to primary sources.
 - **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — a fabricated URL has no Wayback archive and surfaces red in the debt manifest. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
 
 ### Workflow Modes
@@ -367,7 +370,7 @@ Strict QC uses minimum non-whitespace completeness floors of 4,000 / 10,000 / 18
 ### Six-Phase Pipeline
 
 1. **Kickoff**: scope/boundaries, ≥15 research questions, bilingual keyword matrix → checkpoint
-2. **Broad survey**: 6 lists (papers / people / leading companies / policy & standards / data / cases) → checkpoint
+2. **Broad survey**: 7 lists (papers / people / leading companies / policy & standards / data / broker research / cases) → checkpoint
 3. **Argument map + outline**: define thesis, claims, dependencies and evidence before the dynamic outline → checkpoint
 4. **Per-chapter research**: persist chapter status, dispatch `researcher` workers, keep Markdown separate from `.meta.json`, and resume at the first incomplete chapter
 5. **Assemble + edit**: dedupe source tags → `_assembled_report.md` → constrained editor compresses and restructures the final narrative
@@ -445,7 +448,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 | Tier | Source type | Tool mapping |
 |---|---|---|
 | **A · Primary** | Corporate sites, annual/financial reports, whitepapers, product docs, standards, government policy, patents, original talks/interviews | WebFetch / web_reader on official URLs |
-| **B · Authoritative** | Think tanks, industry associations, analysts, universities, international bodies | WebSearch + WebFetch |
+| **B · Authoritative** | Think tanks, industry associations, complete attributable broker/investment-bank research, analysts, universities, international bodies | WebSearch + WebFetch |
 | **C · Professional media** | Major business/tech/industry deep reporting | WebSearch |
 | **D · General** | Self-media, aggregators, forums, anonymous social, marketing | **Lead only** — never the sole basis for a key conclusion |
 
@@ -464,7 +467,7 @@ projects/my-topic/
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, source_index, screenshot_manifest}.csv,
+│        paper_list, broker_report_list, source_index, screenshot_manifest}.csv,
 │        {chapter_meta, claim_ledger}.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
@@ -474,6 +477,7 @@ projects/my-topic/
 
 - On paywalled / JS-blocked pages, the screenshot falls back to a placeholder and the body reads "no reliable public source found" — nothing is fabricated.
 - Primary sources are preferred; secondary sources are leads only and never the sole basis for a key conclusion.
+- Broker ratings, price targets, and forecasts are institutional views; syndicated copies count once, underlying facts should be traced to primary sources, and access controls or full-report copyrights are not bypassed.
 - Data cutoff and access dates follow the report frontmatter and `citations.csv`.
 - Playwright is pinned because its driver and browser binary are coupled. `tools/check_env.py` reads the required Chromium build from the installed package instead of hardcoding the mapping in this README. Re-run `uv run playwright install chromium` on mismatch.
 

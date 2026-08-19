@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from tools.source_identity import source_independence_key
+    from tools.source_identity import canonical_url_key, source_independence_key
 except ModuleNotFoundError:
-    from source_identity import source_independence_key
+    from source_identity import canonical_url_key, source_independence_key
 
 
 SD_HEADER = [
@@ -37,8 +37,16 @@ CT_HEADER = [
     "controversy_id", "question", "view_a", "supporters_a", "view_b",
     "supporters_b", "evidence_comparison", "research_judgment",
 ]
+BR_HEADER = [
+    "source_id", "broker", "authors", "report_type", "title",
+    "covered_entity_or_industry", "publish_date", "forecast_horizon",
+    "rating", "target_price", "key_assumptions", "primary_data_sources",
+    "conflict_disclosure", "url", "access_date", "page_or_location",
+    "tier", "independence_group", "used_for", "limitations", "access_notes",
+]
 OUTPUTS = (
     ("data/source_data.csv", SD_HEADER),
+    ("data/broker_report_list.csv", BR_HEADER),
     ("evidence/evidence_matrix.csv", EV_HEADER),
     ("evidence/controversy_matrix.csv", CT_HEADER),
 )
@@ -139,6 +147,14 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
                 result.error(source_where, "title 不得为空")
             if raw.get("tier") not in {"A", "B", "C", "D", None}:
                 result.error(source_where, "tier 必须为 A/B/C/D/null")
+            if _is_broker_report(raw):
+                for key in ("organization", "publish_date", "authors", "report_type"):
+                    if not raw.get(key):
+                        result.warn(source_where, f"券商研报建议补充 {key}")
+                if not raw.get("independence_group"):
+                    result.warn(source_where, "券商研报建议以券商研究所填写 independence_group")
+                if raw.get("tier") != "B":
+                    result.warn(source_where, "完整券商研报通常应标 B；摘要/转载应改 source_type 并降为 C/D")
 
         for i, raw in enumerate(evidence):
             item_where = f"{where}.data_points[{i}]"
@@ -251,6 +267,82 @@ def emit_source_data(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "limitations": "; ".join(_ids(item.get("limitations"))),
                 "notes": f"[{chapter.get('chapter_id', '')}]",
             })
+    return rows
+
+
+def _is_broker_report(source: dict[str, Any]) -> bool:
+    source_type = _string(source.get("source_type")).lower().replace("-", "_")
+    return source_type in {"broker_report", "sell_side_research", "券商研报", "投行研报"}
+
+
+def emit_broker_reports(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """从章节元数据汇总实际使用的券商研报，并按原始 URL/报告身份去重。"""
+    records: dict[str, dict[str, Any]] = {}
+    for chapter in chapters:
+        chapter_id = _string(chapter.get("chapter_id"))
+        claims = [item for item in chapter.get("claims", []) if isinstance(item, dict)]
+        for source in chapter.get("sources", []):
+            if not isinstance(source, dict) or not _is_broker_report(source):
+                continue
+            source_id = _string(source.get("source_id"))
+            url = _string(source.get("url"))
+            report_identity = [
+                _string(source.get(key)).lower()
+                for key in ("organization", "title", "publish_date")
+            ]
+            # 同一报告的官网、平台和转载 URL 仍只算一份；元数据不完整时才回退 URL。
+            identity = (
+                "report:" + "|".join(report_identity)
+                if all(report_identity)
+                else "url:" + canonical_url_key(url)
+            )
+            used_claims = [
+                _string(claim.get("claim_id"))
+                for claim in claims
+                if source_id in _ids(claim.get("source_ids"))
+            ]
+            limitations = _ids(source.get("limitations"))
+            row = records.get(identity)
+            if row is None:
+                row = {
+                    "source_id": [],
+                    "broker": _string(source.get("organization")),
+                    "authors": _first(source, "authors"),
+                    "report_type": _string(source.get("report_type")),
+                    "title": _string(source.get("title")),
+                    "covered_entity_or_industry": _string(source.get("covered_entity_or_industry")),
+                    "publish_date": _string(source.get("publish_date")),
+                    "forecast_horizon": _string(source.get("forecast_horizon")),
+                    "rating": _string(source.get("rating")),
+                    "target_price": _string(source.get("target_price")),
+                    "key_assumptions": _first(source, "key_assumptions"),
+                    "primary_data_sources": _first(source, "primary_data_sources"),
+                    "conflict_disclosure": _string(source.get("conflict_disclosure")),
+                    "url": url,
+                    "access_date": _string(source.get("access_date")),
+                    "page_or_location": _string(source.get("page_or_location")),
+                    "tier": _string(source.get("tier")),
+                    "independence_group": _string(source.get("independence_group")),
+                    "used_for": [],
+                    "limitations": [],
+                    "access_notes": _string(source.get("access_notes")),
+                }
+                records[identity] = row
+            if source_id and source_id not in row["source_id"]:
+                row["source_id"].append(source_id)
+            usage = f"{chapter_id}:{','.join(used_claims)}" if used_claims else chapter_id
+            if usage and usage not in row["used_for"]:
+                row["used_for"].append(usage)
+            for limitation in limitations:
+                if limitation not in row["limitations"]:
+                    row["limitations"].append(limitation)
+
+    rows: list[dict[str, str]] = []
+    for row in records.values():
+        rows.append({
+            key: "; ".join(value) if isinstance(value, list) else _string(value)
+            for key, value in row.items()
+        })
     return rows
 
 
@@ -381,8 +473,14 @@ def run(root: Path, meta_rel: str, *, dry_run: bool = False, force: bool = False
         print(f"✗ 聚合中止：{len(validation.errors)} 个错误；原 CSV 未修改", file=sys.stderr)
         return 1
 
-    rows = (emit_source_data(chapters), emit_evidence(chapters), emit_controversies(chapters))
-    print(f"校验通过：{len(chapters)} 章，{len(rows[0])} 条证据，{len(rows[1])} 条结论，{len(rows[2])} 项争议")
+    rows = (
+        emit_source_data(chapters), emit_broker_reports(chapters),
+        emit_evidence(chapters), emit_controversies(chapters),
+    )
+    print(
+        f"校验通过：{len(chapters)} 章，{len(rows[0])} 条证据，"
+        f"{len(rows[1])} 份券商研报，{len(rows[2])} 条结论，{len(rows[3])} 项争议"
+    )
     if dry_run:
         print("✓ dry-run 完成；未写入任何文件")
         return 0
@@ -424,7 +522,7 @@ def run(root: Path, meta_rel: str, *, dry_run: bool = False, force: bool = False
     finally:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
-    print("✓ 三个派生 CSV 已原子替换")
+    print("✓ 四个派生 CSV 已原子替换")
     return 0
 
 

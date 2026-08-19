@@ -14,11 +14,18 @@
 | 等级 | 来源类型 | 工具映射（科技/产业） |
 |---|---|---|
 | A 一级·原始 | 企业官网、年报财报、白皮书、产品文档、标准原文、政府政策、专利、原始演讲/访谈 | WebFetch / web_reader 抓官方 URL |
-| B 二级·权威研究 | 智库、行业协会、分析师、高校、国际机构报告 | WebSearch + WebFetch |
+| B 二级·权威研究 | 智库、行业协会、具名券商/投行研报、分析师、高校、国际机构报告 | WebSearch + WebFetch |
 | C 三级·专业媒体 | 主流财经/科技/行业媒体深度报道 | WebSearch |
 | D 四级·一般内容 | 自媒体、聚合站、论坛、匿名社媒、营销软文 | **仅作线索**，不得作关键结论唯一依据 |
 
 关键结论不得只依赖 C/D 级来源。
+
+### 券商研报作为研究输入
+- 将券商/投行研报纳入广泛调研和分章深研，重点用于产业链拆解、盈利预测、市场一致预期、估值假设与专家线索。完整、具名、可追溯且披露方法的研报通常为 B 级；转载摘要/截图为 C 级，来源不明的研报聚合为 D 级线索。
+- 评级、目标价、盈利预测、市场空间测算等必须标 `【机构观点·券商名称·发布日期】`，不得写成事实。研报转引的财报、政策、标准和数据库，应尽量回溯原始来源并另行登记，不能把二手数据当作 A 级。
+- 同一研报的官网版、平台版和转载版只算一个来源；同一券商研究所默认使用同一 `independence_group`。关键事实/数值仍须用原始来源或另一独立机构交叉验证。
+- 在 chapter meta 的来源对象中标 `source_type=broker_report`，并尽量记录 `authors`、`report_type`、`covered_entity_or_industry`、`page_or_location`、`forecast_horizon`、`key_assumptions`、`conflict_disclosure` 与访问限制。交付时由聚合器生成 `data/broker_report_list.csv`。
+- 不绕过登录、验证码、付费墙或授权控制，不传播未授权全文。完整规则见 `references/source_rubric.md`。
 
 ## 交叉验证
 一级数值类结论（市场规模/收入/用户/份额/融资/排名）须 **≥2 独立来源**。来源冲突时：列出各数据 + 口径 + 时间 + 机构，进 `evidence/controversy_matrix.csv`，给**条件性结论**，不得简单二选一。正文【事实】段中的数值声明同样适用此规则——单一 C/D 级来源支撑的数值会被 `qc.py` 标记为 advisory（写入 `data/qc_debt.json`），建议补独立第二来源或改标【推测】。
@@ -44,7 +51,7 @@ projects/<课题slug>/
 ├── README.md
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
-├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md, chapter_meta.json}
+├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, broker_report_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md, chapter_meta.json}
 ├── evidence/{evidence_matrix.csv, controversy_matrix.csv, research_gaps.md}
 └── sources/{bibliography.md, source_index.md}
 ```
