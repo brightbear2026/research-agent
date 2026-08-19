@@ -114,7 +114,8 @@
   .references li{margin:6px 0;color:var(--text-soft);word-break:break-word;padding:4px 6px;border-radius:4px;transition:background .3s}
   li[id^="ref-"]:target{background:var(--highlight-bg);outline:2px solid var(--accent);animation:flash 1.5s ease-out}
   li[id^="ref-"]:target .backref{opacity:1}
-  .backref{font-size:11px;margin-left:6px;opacity:0;transition:opacity .3s;color:var(--accent);font-weight:700;text-decoration:none;white-space:nowrap}
+  .backref{font:inherit;font-size:11px;margin-left:6px;padding:0;border:0;background:none;cursor:pointer;opacity:0;
+    transition:opacity .3s;color:var(--accent);font-weight:700;text-decoration:none;white-space:nowrap}
   .backref:hover{text-decoration:underline}
   @keyframes flash{0%{background:var(--highlight-flash)}100%{background:var(--highlight-bg)}}
 
@@ -277,14 +278,24 @@
   function goBackToCitation(){
     var raw=sessionStorage.getItem('cite_origin');
     if(raw){
-      var pos=JSON.parse(raw);
-      window.scrollTo({left:pos.x,top:pos.y,behavior:'smooth'});
+      try{
+        var pos=JSON.parse(raw);
+        window.scrollTo({left:pos.x,top:pos.y,behavior:'smooth'});
+      }catch(_err){
+        window.scrollTo({top:0,behavior:'smooth'});
+      }
       sessionStorage.removeItem('cite_origin');
     }else{
       // 无记录时滚动到参考文献区域上方
       window.scrollTo({top:0,behavior:'smooth'});
     }
   }
+  // 返回按钮只属于 HTML 交互层；不向 canonical Markdown 注入脚本或 javascript: URL。
+  document.querySelectorAll('li[id^="ref-"]').forEach(function(li){
+    var button=document.createElement('button');
+    button.type='button'; button.className='backref'; button.textContent='↑ 返回正文';
+    button.addEventListener('click',goBackToCitation); li.appendChild(button);
+  });
   window.addEventListener('hashchange',function(){
     var h=location.hash;
     if(h && h.indexOf('ref-')===1){ centerRef(h.slice(1)); }

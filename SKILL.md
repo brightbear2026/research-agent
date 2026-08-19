@@ -41,7 +41,7 @@ Check environment with:
 cd <skill_dir> && uv run python tools/check_env.py
 ```
 
-## Red Lines (absolute — see references/project_conventions.md for full detail)
+## Red Lines (absolute — read `CLAUDE.md` for the canonical, complete rules)
 
 1. **NO FABRICATION**: papers, authors, quotes, data, URLs, screenshots, dates — never invent. If unconfirmable, write「暂未找到可靠公开来源」.
 2. **Source tiering**: A (primary) / B (authoritative) / C (media) / D (low). Key conclusions need ≥2 independent sources, not relying solely on C/D.
@@ -74,7 +74,7 @@ cd <skill_dir> && uv run python tools/check_env.py
 | Phase | Name | Checkpoint (mode-dependent) |
 |-------|------|-----------------------------|
 | 0 | Parse & init | No |
-| 1 | Research kickoff | Yes (regular/plan) |
+| 1 | Research kickoff | Yes (regular only) |
 | 2 | Broad survey | Yes (regular) |
 | 3 | Argument map & outline | Yes (regular/plan) |
 | 4 | Chapter deep research | No |
@@ -104,7 +104,7 @@ Write output to `sources/stage1_kickoff.md`:
 
 ## Phase 2: Broad Survey
 
-Search 6 dimensions: academic papers / key people / leading companies / policy & standards / market data / cases. Write to `sources/stage2_survey.md`.
+Read the Phase 2 source dimensions from the canonical `.claude/commands/deep-research.md` before running the survey, then write the resulting lists to `sources/stage2_survey.md`. Do not maintain a separate fixed dimension list here; this keeps Hermes aligned when the canonical workflow adds source types such as broker/investment-bank research.
 
 → Call `advance`. Confirm if `needs_confirmation`.
 
@@ -120,10 +120,10 @@ Search 6 dimensions: academic papers / key people / leading companies / policy &
 
 1. Register chapters: `uv run python tools/workflow_policy.py register-chapters --root projects/<slug> --chapter ch01 --chapter ch02 ...`
 2. For each chapter, write a research card (based on `templates/research_card.md`).
-3. **Dispatch researcher subagent via `delegate_task`**. Load `references/researcher_brief.md` as context.
-4. Before dispatch: `workflow_policy.py chapter --root <slug> --chapter <chNN> --status in_progress`
-5. After completion: `workflow_policy.py chapter --root <slug> --chapter <chNN> --status completed`
-6. If interrupted: `workflow_policy.py next-chapter --root <slug>` resumes from first incomplete chapter.
+3. **Dispatch researcher subagent via `delegate_task`**. Load the canonical `.claude/agents/researcher.md` as context; `references/researcher_brief.md` is only a pointer and must not be used as the prompt by itself.
+4. Before dispatch: `workflow_policy.py chapter --root projects/<slug> --chapter <chNN> --status in_progress`
+5. After completion: `workflow_policy.py chapter --root projects/<slug> --chapter <chNN> --status completed`
+6. If interrupted: `workflow_policy.py next-chapter --root projects/<slug>` resumes from first incomplete chapter.
 7. Independent chapters can run in parallel (`delegate_task(tasks=[...])`).
 8. Each researcher outputs `report/_draft_<chNN>_<slug>.md` + `.meta.json` (schema v2).
 
@@ -147,8 +147,10 @@ cd <skill_dir> && uv run python tools/aggregate_meta.py --root projects/<slug> -
 
 ### Step 3: Editor (TOOL-LEVEL ISOLATED — critical red line)
 ```bash
-hermes chat -q "<editor prompt from references/report_editor_brief.md>" -t file --yolo
+hermes chat -q "<contents of .claude/agents/report-editor.md plus the project path>" -t file --yolo
 ```
+
+`references/report_editor_brief.md` is only a pointer. Passing its six-line contents as the editor prompt is not sufficient.
 
 ### Step 4: Post-edit QC (with claim-ledger audit)
 ```bash
@@ -176,8 +178,9 @@ cd <skill_dir> && uv run python tools/qc.py --root projects/<slug> \
      --claim-ledger projects/<slug>/data/claim_ledger.json \
      --depth <depth> --strict
    ```
-5. Write `projects/<slug>/README.md`.
-6. **Deliver to user**: copy all outputs to delivery folder (see Delivery section).
+5. **Record advisory QC debt**: `uv run python tools/workflow_policy.py record-debt --root projects/<slug>`.
+6. Write `projects/<slug>/README.md`, including the core QC result and advisory debt summary.
+7. **Deliver to user**: copy all outputs to delivery folder (see Delivery section).
 7. Report to user: paths to MD + HTML + evidence matrix + screenshots + QC results.
 
 → Call `advance`. Must get `workflow_status=completed`.
@@ -263,14 +266,14 @@ Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 �
 
 12. **Depth not propagated** (v2.1 fixed) — ensure the `depth` parameter from user input is correctly reflected in frontmatter and QC. If merge.py outputs depth as "标准" when user specified "深度", manually fix frontmatter before rendering.
 
-13. **QC strict mode false positives on Markdown tables/mermaid** — QC's sentence splitter may count Markdown table rows and mermaid blocks as "超长句". If QC non-strict passes but strict fails only on sentence length, this is a known tool limitation. Ensure non-strict QC passes as the delivery gate.
+13. **Never bypass strict QC** — if Markdown tables or Mermaid blocks trigger readability errors, fix the detector or report structure and rerun `qc.py --strict`. A non-strict pass is diagnostic only and is never the final delivery gate.
 
 ## Verification Checklist
 
-- [ ] Phase 1-3 checkpoints confirmed by user via `clarify` (in regular/plan mode)
+- [ ] Confirmation points match the state machine: regular confirms kickoff/survey/outline; plan confirms outline only; execution has no repository-defined confirmation.
 - [ ] Phase 4: chapters registered via `register-chapters`, all drafts collected with `.md` + `.meta.json` pairs (schema v2)
 - [ ] Phase 5: merge.py ran, aggregate_meta passed, editor ran with `-t file`, post-edit QC + claim-ledger audit passed
-- [ ] Phase 6: screenshots captured, HTML rendered, evidence.py ran, qc.py --strict --claim-ledger passed (or non-strict passes with known table/mermaid caveat)
+- [ ] Phase 6: screenshots captured, HTML rendered, evidence.py ran, `qc.py --strict --claim-ledger` passed, and `record-debt` completed.
 - [ ] No `[[SRC` tags remain in final report
 - [ ] No production-process text in reader text
 - [ ] All inline images near supporting arguments

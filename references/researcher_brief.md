@@ -1,6 +1,5 @@
 # Researcher Brief
 
-本文件的内容与 `.claude/agents/researcher.md` 保持同步。
-请直接阅读 [`.claude/agents/researcher.md`](../.claude/agents/researcher.md) 获取完整的 researcher 子代理指令。
+本文件是指针，不包含 researcher 子代理指令。运行时必须直接读取 [`.claude/agents/researcher.md`](../.claude/agents/researcher.md)。
 
-如需在非 Claude Code 环境中使用（如 Hermes delegate_task），将该文件内容作为 context 传入即可。
+在 Hermes `delegate_task` 中，应把 `.claude/agents/researcher.md` 的完整内容作为 context；不得把本文件的占位文字单独作为 context。
