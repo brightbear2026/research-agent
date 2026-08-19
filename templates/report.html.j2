@@ -11,12 +11,14 @@
     --primary:#1e3a8a; --primary-soft:#dbeafe; --accent:#0f766e;
     --tag-fact:#0f766e; --tag-opinion:#7c3aed; --tag-org:#1d4ed8;
     --tag-dispute:#b91c1c; --tag-judge:#a16207; --tag-guess:#6b7280;
+    --highlight-bg:rgba(15,118,110,.18); --highlight-flash:rgba(15,118,110,.4);
     --shadow:0 1px 3px rgba(0,0,0,.08);
   }
   [data-theme="dark"]{
     --bg:#0b0b0f; --bg-soft:#15151c; --card:#15151c; --border:#27272a;
     --text:#f4f4f5; --text-soft:#d4d4d8; --muted:#71717a;
     --primary:#93c5fd; --primary-soft:#1e293b; --accent:#5eead4;
+    --highlight-bg:rgba(94,234,212,.18); --highlight-flash:rgba(94,234,212,.4);
     --shadow:0 1px 3px rgba(0,0,0,.5);
   }
   *{box-sizing:border-box}
@@ -60,6 +62,7 @@
 
   /* content typography */
   h1,h2,h3,h4{scroll-margin-top:80px;line-height:1.35}
+  li[id^="ref-"]{scroll-margin-top:80px}
   main h2{font-size:24px;border-bottom:1px solid var(--border);padding-bottom:8px;margin-top:40px}
   main h3{font-size:19px;margin-top:26px}
   main p{margin:12px 0}
@@ -108,7 +111,13 @@
   sup.cite a{color:var(--accent);font-weight:700}
   .references{font-size:13.5px}
   .references ol{padding-left:22px}
-  .references li{margin:6px 0;color:var(--text-soft);word-break:break-word}
+  .references li{margin:6px 0;color:var(--text-soft);word-break:break-word;padding:4px 6px;border-radius:4px;transition:background .3s}
+  li[id^="ref-"]:target{background:var(--highlight-bg);outline:2px solid var(--accent);animation:flash 1.5s ease-out}
+  li[id^="ref-"]:target .backref{opacity:1}
+  .backref{font:inherit;font-size:11px;margin-left:6px;padding:0;border:0;background:none;cursor:pointer;opacity:0;
+    transition:opacity .3s;color:var(--accent);font-weight:700;text-decoration:none;white-space:nowrap}
+  .backref:hover{text-decoration:underline}
+  @keyframes flash{0%{background:var(--highlight-flash)}100%{background:var(--highlight-bg)}}
 
   /* inline tags */
   .tag{display:inline-block;font-size:11px;font-weight:700;padding:1px 7px;border-radius:4px;margin-right:4px;vertical-align:middle}
@@ -253,6 +262,47 @@
       ids.forEach(function(id){var el=document.getElementById(id); if(el) obs.observe(el);});
     }
   })();
+  // 引用跳转：记录出发点，将参考文献滚动到视口中央
+  function centerRef(id){
+    var el=document.getElementById(id);
+    if(el){ el.scrollIntoView({behavior:'smooth',block:'center'}); }
+  }
+  // 记录点击引用时的出发点（滚动位置），供"返回正文"使用
+  document.addEventListener('click',function(e){
+    var a=e.target.closest('sup.cite a[href^="#ref-"]');
+    if(a){
+      sessionStorage.setItem('cite_origin',JSON.stringify({x:window.scrollX,y:window.scrollY}));
+    }
+  });
+  // "返回正文"按钮：回到上次点击引用时的位置
+  function goBackToCitation(){
+    var raw=sessionStorage.getItem('cite_origin');
+    if(raw){
+      try{
+        var pos=JSON.parse(raw);
+        window.scrollTo({left:pos.x,top:pos.y,behavior:'smooth'});
+      }catch(_err){
+        window.scrollTo({top:0,behavior:'smooth'});
+      }
+      sessionStorage.removeItem('cite_origin');
+    }else{
+      // 无记录时滚动到参考文献区域上方
+      window.scrollTo({top:0,behavior:'smooth'});
+    }
+  }
+  // 返回按钮只属于 HTML 交互层；不向 canonical Markdown 注入脚本或 javascript: URL。
+  document.querySelectorAll('li[id^="ref-"]').forEach(function(li){
+    var button=document.createElement('button');
+    button.type='button'; button.className='backref'; button.textContent='↑ 返回正文';
+    button.addEventListener('click',goBackToCitation); li.appendChild(button);
+  });
+  window.addEventListener('hashchange',function(){
+    var h=location.hash;
+    if(h && h.indexOf('ref-')===1){ centerRef(h.slice(1)); }
+  });
+  if(location.hash && location.hash.indexOf('ref-')===1){
+    setTimeout(function(){ centerRef(location.hash.slice(1)); },100);
+  }
 </script>
 
   <!-- Mermaid 概念图：需联网加载 CDN；离线/被墙时降级为原始文本 -->

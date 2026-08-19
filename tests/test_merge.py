@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.merge import TAG_RE, extract_url, main, norm_key, normalize_tag_inner, parse_fields, strip_internal_sections
+from tools.merge import (
+    TAG_RE, build_refs_md, extract_url, main, norm_key, normalize_tag_inner,
+    parse_fields, strip_internal_sections,
+)
 
 
 class MergeTests(unittest.TestCase):
@@ -74,6 +77,12 @@ class MergeTests(unittest.TestCase):
         self.assertNotIn("数据小表", cleaned)
         self.assertNotIn("建议截图", cleaned)
         self.assertNotIn("待补充内容", cleaned)
+
+    def test_reference_markdown_contains_no_javascript_handlers(self) -> None:
+        refs = build_refs_md({1: {"title": "来源", "url": "https://example.com"}})
+        self.assertIn('id="ref-1"', refs)
+        self.assertNotIn("javascript:", refs)
+        self.assertNotIn("onclick=", refs)
 
     def test_main_writes_assembly_and_chapter_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
