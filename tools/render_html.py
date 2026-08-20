@@ -285,12 +285,25 @@ def render(md_path: Path, out_path: Path, root: Path, template_path: Path) -> No
     meta, body_md = split_frontmatter(text)
 
     md = MarkdownIt("commonmark", {"html": True}).enable("table")
-    # ```mermaid 代码块 → <div class="mermaid">，交由模板里的 Mermaid.js 渲染成拓扑图
+    # ```mermaid 代码块 → <div class="mermaid">，交由模板里的 Mermaid.js 渲染成拓扑图。
+    # 时间线和较复杂的横向图需要比正文更宽的画布；给它们附加语义 class，
+    # 由模板提供横向滚动和放大查看，而不是把整张图压缩到正文宽度。
     _orig_fence = md.renderer.rules.get("fence")
     def _fence(tokens, idx, options, env):
-        if tokens[idx].info.strip() == "mermaid":
+        info = tokens[idx].info.strip().split()
+        if info and info[0] == "mermaid":
+            source = tokens[idx].content
+            source_lines = [line.strip() for line in source.splitlines() if line.strip()]
+            first_line = source_lines[0].lower() if source_lines else ""
+            classes = ["mermaid"]
+            if first_line == "timeline":
+                classes.append("mermaid-timeline")
+            elif (re.match(r"^(?:flowchart|graph)\s+(?:lr|rl)\b", first_line)
+                  and len(source_lines) >= 12):
+                classes.append("mermaid-wide")
             # 保留 mermaid 语法里的 "（label 用），仅转义会破坏 HTML 的 < > &
-            return "<div class=\"mermaid\">" + html_escape(tokens[idx].content, quote=False) + "</div>\n"
+            return (f'<div class="{" ".join(classes)}">'
+                    + html_escape(source, quote=False) + "</div>\n")
         return _orig_fence(tokens, idx, options, env)
     md.renderer.rules["fence"] = _fence
     body_html = md.render(body_md)

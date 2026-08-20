@@ -743,17 +743,24 @@ def check_readability(
         add_issue(report, f"正文残留 {len(internal_headings)} 个生产过程章节", strict)
 
     plain = re.sub(r"(?m)^#{1,6}\s+.*$", "", body)
+    plain = re.sub(r"```[\s\S]*?```", "", plain)
+    plain = re.sub(r"(?m)^\s*\|.*\|.*$", "", plain)
     plain = re.sub(r"<[^>]+>", "", plain)
     plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", plain)
     plain = re.sub(r"【[^】]+】", "", plain)
     plain = re.sub(r"\[\d+(?:[-,，]\s*\d+)*\]", "", plain)
+    # Split numbered/bullet list items into separate sentences for readability metrics
+    plain = re.sub(r"\s*;\s*-\s+", "。\n", plain)
+    plain = re.sub(r"\s*-\s+\*\*", "。\n**", plain)
+    plain = re.sub(r"\n\s*-\s+", "\n", plain)
+    plain = re.sub(r"\n\s*\d+\.\s+", "\n", plain)
     body_chars = len(re.sub(r"\s+", "", plain))
 
     paragraphs = [re.sub(r"\s+", " ", p.strip())
                   for p in re.split(r"\n\s*\n", plain)
                   if p.strip() and not p.lstrip().startswith(("#", "- ", ">"))]
     paragraph_lengths = [len(p) for p in paragraphs]
-    sentences = [s.strip() for s in re.split(r"[。！？!?]\s*", "\n".join(paragraphs)) if s.strip()]
+    sentences = [s.strip() for s in re.split(r"[。！？!?；]\s*", "\n".join(paragraphs)) if s.strip()]
     sentence_lengths = [len(s) for s in sentences]
 
     if body_chars < profile.min_body_chars:
