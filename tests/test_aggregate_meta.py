@@ -6,7 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.aggregate_meta import emit_broker_reports, emit_evidence, run, validate_chapters
+from tools.aggregate_meta import (
+    emit_broker_reports,
+    emit_diagrams,
+    emit_evidence,
+    run,
+    validate_chapters,
+)
 from tools.migrate_chapter_meta import migrate_chapter
 
 
@@ -55,6 +61,39 @@ class MigrationTests(unittest.TestCase):
 
 
 class AggregateTests(unittest.TestCase):
+    def test_diagram_manifest_preserves_source_and_claim_provenance(self) -> None:
+        chapter = valid_chapter()
+        chapter["diagrams"] = [{
+            "fig_id": "FIG-101", "title": "信息流", "visual_type": "architecture",
+            "source_html": "diagrams/FIG-101.html", "local_path": "images/FIG-101.png",
+            "size": "doc-wide", "detail": "balanced", "profile": "default",
+            "source_ids": ["S1", "S2"], "supports_claim_ids": ["C1"],
+            "alt_text": "来源汇入结论的信息流",
+        }]
+        chapters, result = validate_chapters([chapter])
+        self.assertFalse(result.errors)
+        row = emit_diagrams(chapters)[0]
+        self.assertEqual(row["source_ids"], "S1; S2")
+        self.assertEqual(row["source_orgs"], "甲; 乙")
+        self.assertEqual(row["supports_conclusion"], "C1")
+
+    def test_diagram_rejects_unknown_provenance_and_duplicate_id(self) -> None:
+        first = valid_chapter()
+        first["diagrams"] = [{
+            "fig_id": "FIG-101", "title": "图", "visual_type": "flow",
+            "source_html": "diagrams/FIG-101.html", "local_path": "images/FIG-101.png",
+            "size": "standard", "detail": "minimal", "profile": "default",
+            "source_ids": ["MISSING"], "supports_claim_ids": ["MISSING"], "alt_text": "图",
+        }]
+        second = valid_chapter()
+        second["chapter_id"] = "ch02"
+        second["diagrams"] = [dict(first["diagrams"][0])]
+        _, result = validate_chapters([first, second])
+        joined = "\n".join(result.errors)
+        self.assertIn("不存在的 source_id", joined)
+        self.assertIn("不存在的 claim_id", joined)
+        self.assertIn("fig_id 全局重复", joined)
+
     def test_evidence_matrix_uses_ids_not_conclusion_text_as_support(self) -> None:
         chapter = valid_chapter()
         rows = emit_evidence([chapter])
@@ -137,6 +176,7 @@ class AggregateTests(unittest.TestCase):
             self.assertEqual(run(root, "data/chapter_meta.json", force=True), 0)
             self.assertTrue((root / "evidence" / "evidence_matrix.csv").exists())
             self.assertTrue((root / "data" / "broker_report_list.csv").exists())
+            self.assertTrue((root / "data" / "diagram_manifest.csv").exists())
             backups = list((root / ".aggregate-backups").glob("*/data/source_data.csv"))
             self.assertEqual(len(backups), 1)
             with (root / "data" / "source_data.csv").open(encoding="utf-8") as handle:

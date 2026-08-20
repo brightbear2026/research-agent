@@ -44,9 +44,15 @@ BR_HEADER = [
     "conflict_disclosure", "url", "access_date", "page_or_location",
     "tier", "independence_group", "used_for", "limitations", "access_notes",
 ]
+DI_HEADER = [
+    "fig_id", "source_html", "local_path", "title", "alt_text",
+    "visual_type", "size", "detail", "profile", "source_ids",
+    "source_orgs", "source_docs", "supports_conclusion",
+]
 OUTPUTS = (
     ("data/source_data.csv", SD_HEADER),
     ("data/broker_report_list.csv", BR_HEADER),
+    ("data/diagram_manifest.csv", DI_HEADER),
     ("evidence/evidence_matrix.csv", EV_HEADER),
     ("evidence/controversy_matrix.csv", CT_HEADER),
 )
@@ -95,6 +101,7 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
     if len(chapters) != len(document):
         result.error("$", "数组中存在非对象章节")
     seen_chapters: set[str] = set()
+    seen_figure_ids: set[str] = set()
     for index, chapter in enumerate(chapters):
         where = f"$[{index}]"
         chapter_id = _string(chapter.get("chapter_id"))
@@ -121,6 +128,14 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
         if not isinstance(evidence, list):
             result.error(where, "data_points 必须是数组")
             evidence = []
+        screenshots = chapter.get("screenshots", [])
+        if not isinstance(screenshots, list):
+            result.error(where, "screenshots 必须是数组")
+            screenshots = []
+        diagrams = chapter.get("diagrams", [])
+        if not isinstance(diagrams, list):
+            result.error(where, "diagrams 必须是数组")
+            diagrams = []
 
         source_ids = {_string(x.get("source_id")) for x in sources if isinstance(x, dict)}
         evidence_ids = {_string(x.get("evidence_id")) for x in evidence if isinstance(x, dict)}
@@ -134,6 +149,54 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
             result.error(where, "evidence_id 缺失或重复")
         if len(claim_ids) != len(claims):
             result.error(where, "claim_id 缺失或重复")
+
+        for i, raw in enumerate(screenshots):
+            if not isinstance(raw, dict):
+                continue
+            fig_id = _string(raw.get("fig_id"))
+            if not fig_id:
+                continue
+            item_where = f"{where}.screenshots[{i}]"
+            if fig_id in seen_figure_ids:
+                result.error(item_where, f"fig_id 全局重复：{fig_id}")
+            else:
+                seen_figure_ids.add(fig_id)
+
+        for i, raw in enumerate(diagrams):
+            item_where = f"{where}.diagrams[{i}]"
+            if not isinstance(raw, dict):
+                result.error(item_where, "Diagram Design 图必须是对象")
+                continue
+            fig_id = _string(raw.get("fig_id"))
+            if not re.fullmatch(r"FIG-\d{3,}", fig_id):
+                result.error(item_where, "fig_id 必须匹配 FIG-NNN")
+            elif fig_id in seen_figure_ids:
+                result.error(item_where, f"fig_id 全局重复：{fig_id}")
+            else:
+                seen_figure_ids.add(fig_id)
+            if not re.fullmatch(r"diagrams/[^/]+\.html", _string(raw.get("source_html"))):
+                result.error(item_where, "source_html 必须是 diagrams/<文件>.html")
+            if not re.fullmatch(r"images/[^/]+\.png", _string(raw.get("local_path"))):
+                result.error(item_where, "local_path 必须是 images/<文件>.png")
+            if raw.get("size") not in {"compact", "standard", "doc-wide", "hero"}:
+                result.error(item_where, "size 必须为 compact/standard/doc-wide/hero")
+            if raw.get("detail") not in {"minimal", "balanced", "rich"}:
+                result.error(item_where, "detail 必须为 minimal/balanced/rich")
+            for key in ("title", "visual_type", "profile", "alt_text"):
+                if not _string(raw.get(key)):
+                    result.error(item_where, f"{key} 不得为空")
+            diagram_sources = _ids(raw.get("source_ids"))
+            diagram_claims = _ids(raw.get("supports_claim_ids"))
+            if not diagram_sources:
+                result.error(item_where, "source_ids 不得为空")
+            if not diagram_claims:
+                result.error(item_where, "supports_claim_ids 不得为空")
+            for ref in diagram_sources:
+                if ref not in source_ids:
+                    result.error(item_where, f"引用不存在的 source_id：{ref}")
+            for ref in diagram_claims:
+                if ref not in claim_ids:
+                    result.error(item_where, f"引用不存在的 claim_id：{ref}")
 
         for i, raw in enumerate(sources):
             source_where = f"{where}.sources[{i}]"
@@ -346,6 +409,37 @@ def emit_broker_reports(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
     return rows
 
 
+def emit_diagrams(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """派生 Diagram Design 导出清单，并保留来源与结论追踪。"""
+    rows: list[dict[str, str]] = []
+    for chapter in chapters:
+        source_map, _ = _source_maps(chapter)
+        for diagram in chapter.get("diagrams", []):
+            source_ids = _ids(diagram.get("source_ids"))
+            linked = [source_map[sid] for sid in source_ids]
+            rows.append({
+                "fig_id": _string(diagram.get("fig_id")),
+                "source_html": _string(diagram.get("source_html")),
+                "local_path": _string(diagram.get("local_path")),
+                "title": _string(diagram.get("title")),
+                "alt_text": _string(diagram.get("alt_text")),
+                "visual_type": _string(diagram.get("visual_type")),
+                "size": _string(diagram.get("size")),
+                "detail": _string(diagram.get("detail")),
+                "profile": _string(diagram.get("profile")),
+                "source_ids": "; ".join(source_ids),
+                "source_orgs": "; ".join(dict.fromkeys(
+                    _string(source.get("organization"))
+                    for source in linked if _string(source.get("organization"))
+                )),
+                "source_docs": "; ".join(dict.fromkeys(
+                    _string(source.get("title")) for source in linked
+                )),
+                "supports_conclusion": "; ".join(_ids(diagram.get("supports_claim_ids"))),
+            })
+    return rows
+
+
 def _sufficiency(source_records: list[dict[str, Any]], opposing_count: int, limitations: list[str]) -> str:
     independent = {source_independence_key(source) for source in source_records}
     strong = sum(1 for source in source_records if source.get("tier") in {"A", "B"})
@@ -425,7 +519,7 @@ def emit_controversies(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
                 "evidence_comparison": _first(item, "caliber_difference", "evidence_tier", "methodological_difference", "root_cause_of_disagreement"),
                 "research_judgment": _first(item, "resolution", "conditional_conclusion", "resolution_status"),
             })
-    return rows, skipped
+    return rows
 
 
 def _write_csv(path: Path, header: list[str], rows: list[dict[str, str]]) -> None:
@@ -475,11 +569,12 @@ def run(root: Path, meta_rel: str, *, dry_run: bool = False, force: bool = False
 
     rows = (
         emit_source_data(chapters), emit_broker_reports(chapters),
-        emit_evidence(chapters), emit_controversies(chapters),
+        emit_diagrams(chapters), emit_evidence(chapters), emit_controversies(chapters),
     )
     print(
         f"校验通过：{len(chapters)} 章，{len(rows[0])} 条证据，"
-        f"{len(rows[1])} 份券商研报，{len(rows[2])} 条结论，{len(rows[3])} 项争议"
+        f"{len(rows[1])} 份券商研报，{len(rows[2])} 张结构图，"
+        f"{len(rows[3])} 条结论，{len(rows[4])} 项争议"
     )
     if dry_run:
         print("✓ dry-run 完成；未写入任何文件")
@@ -522,7 +617,7 @@ def run(root: Path, meta_rel: str, *, dry_run: bool = False, force: bool = False
     finally:
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir, ignore_errors=True)
-    print("✓ 四个派生 CSV 已原子替换")
+    print("✓ 五个派生 CSV 已原子替换")
     return 0
 
 
@@ -537,4 +632,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -161,37 +161,11 @@ def load_existing(figures_path: Path) -> dict[str, dict]:
 
 def write_figures(figures_path: Path, rows: dict[str, dict]) -> None:
     figures_path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{figures_path.name}.", suffix=".tmp", dir=figures_path.parent)
-    try:
-        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=FIGURES_COLS)
-            w.writeheader()
-            for fig_id in sorted(rows):
-                w.writerow({k: rows[fig_id].get(k, "") for k in FIGURES_COLS})
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(temp_name, figures_path)
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
-
-
-def resolve_output_path(root: Path, relative: str) -> Path:
-    """截图只能写入 <root>/images，拒绝绝对路径、父目录和符号链接逃逸。"""
-    if not relative or Path(relative).is_absolute():
-        raise ValueError("local_path 必须是 images/ 下的相对 PNG 路径")
-    images_root = (root / "images").resolve()
-    candidate = (root / relative).resolve()
-    try:
-        candidate.relative_to(images_root)
-    except ValueError as exc:
-        raise ValueError(f"local_path 越界: {relative}") from exc
-    if candidate.suffix.lower() != ".png":
-        raise ValueError("截图输出必须是 .png")
-    return candidate
+    with figures_path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=FIGURES_COLS)
+        w.writeheader()
+        for fig_id in sorted(rows):
+            w.writerow({k: rows[fig_id].get(k, "") for k in FIGURES_COLS})
 
 
 def capture_one(page, row: dict) -> tuple[bool, str]:
@@ -298,6 +272,7 @@ def _capture_pdf_impl(
     """下载 PDF 并把指定页渲染成 PNG（多页纵向拼接）。无需浏览器，独立于 Playwright。"""
     try:
         import io
+        import httpx
         import pymupdf
         from PIL import Image
     except ImportError as e:
@@ -373,7 +348,6 @@ def _capture_pdf_impl(
         doc.close()
         return False, str(exc)
     pngs: list[bytes] = []
-    dimensions: list[tuple[int, int]] = []
     for pidx in pages:
         if 0 <= pidx < doc.page_count:
             pixmap = doc[pidx].get_pixmap(dpi=150)
@@ -384,10 +358,6 @@ def _capture_pdf_impl(
     doc.close()
     if not pngs:
         return False, "指定页超出范围"
-    total_pixels = sum(width * height for width, height in dimensions)
-    total_height = sum(height for _, height in dimensions)
-    if total_pixels > MAX_IMAGE_PIXELS or total_height > MAX_STITCH_HEIGHT:
-        return False, f"渲染尺寸超过安全上限（{total_pixels} 像素 / {total_height}px 高）"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if len(pngs) == 1:
         out_path.write_bytes(pngs[0])

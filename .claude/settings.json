@@ -8,7 +8,7 @@
       "Bash(uv run python tools/scaffold.py:*)",
       "Bash(uv run python tools/merge.py:*)",
       "Bash(uv run python tools/aggregate_meta.py:*)",
-      "Bash(uv run python tools/migrate_meta.py:*)",
+      "Bash(uv run python tools/migrate_chapter_meta.py:*)",
       "Bash(uv run python tools/claim_ledger.py:*)",
       "Bash(uv run python tools/workflow_policy.py:*)",
       "Bash(uv run python tools/screenshot.py:*)",

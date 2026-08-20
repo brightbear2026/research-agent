@@ -4,7 +4,6 @@
   "title": "Research chapter metadata v2",
   "description": "单章研究元数据。合并后的 chapter_meta.json 是此对象的数组。",
   "type": "object",
-  "additionalProperties": false,
   "required": [
     "schema_version",
     "chapter_id",
@@ -41,6 +40,10 @@
       "items": {"$ref": "#/$defs/evidence"}
     },
     "screenshots": {"type": "array", "items": {"type": "object"}},
+    "diagrams": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/diagram"}
+    },
     "controversies": {"type": "array", "items": {"type": "object"}},
     "gaps": {"type": "array"},
     "chapter_conclusion": {"$ref": "#/$defs/chapterConclusion"}
@@ -134,100 +137,9 @@
         "decision_implication": {"type": "string"}
       },
       "additionalProperties": true
-    }
-  },
-  "$defs": {
-    "source": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "source_id", "type", "organization", "title", "publication",
-        "publish_date", "url", "access_date", "tier", "independence_group"
-      ],
-      "properties": {
-        "source_id": {"type": "string", "pattern": "^ch[0-9]{2}-S[0-9]{3}$"},
-        "type": {"type": "string", "minLength": 1},
-        "organization": {"type": "string", "minLength": 1},
-        "title": {"type": "string", "minLength": 1},
-        "publication": {"type": "string"},
-        "publish_date": {"type": "string"},
-        "url": {"type": "string", "pattern": "^https?://"},
-        "access_date": {"type": "string", "minLength": 1},
-        "tier": {"enum": ["A", "B", "C", "D"]},
-        "independence_group": {"type": "string", "minLength": 1}
-      }
-    },
-    "evidence": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["evidence_id", "summary", "source_ids", "stance", "limitations"],
-      "properties": {
-        "evidence_id": {"type": "string", "pattern": "^ch[0-9]{2}-E[0-9]{3}$"},
-        "summary": {"type": "string", "minLength": 1},
-        "source_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
-        "stance": {"enum": ["support", "oppose", "context"]},
-        "limitations": {"type": "string"}
-      }
-    },
-    "claim": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "claim_id", "statement", "supporting_evidence_ids", "opposing_evidence_ids",
-        "conditions", "confidence", "decision_implication"
-      ],
-      "properties": {
-        "claim_id": {"type": "string", "pattern": "^ch[0-9]{2}-C[0-9]{3}$"},
-        "statement": {"type": "string", "minLength": 1},
-        "supporting_evidence_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
-        "opposing_evidence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-        "conditions": {"type": "string"},
-        "confidence": {"enum": ["高", "中高", "中", "中低", "低"]},
-        "decision_implication": {"type": "string", "minLength": 1}
-      }
-    },
-    "dataPoint": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "data_id", "claim", "value", "unit", "stat_time", "region",
-        "definition", "source_ids", "is_key", "notes"
-      ],
-      "properties": {
-        "data_id": {"type": "string", "pattern": "^ch[0-9]{2}-D[0-9]{3}$"},
-        "claim": {"type": "string", "minLength": 1},
-        "value": {"type": ["string", "number"]},
-        "unit": {"type": "string"},
-        "stat_time": {"type": "string"},
-        "region": {"type": "string"},
-        "definition": {"type": "string"},
-        "source_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
-        "is_key": {"type": "boolean"},
-        "notes": {"type": "string"}
-      }
-    },
-    "screenshot": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "fig_id", "source_id", "url", "capture", "selector", "wait_ms",
-        "local_path", "title", "supports_claim_ids"
-      ],
-      "properties": {
-        "fig_id": {"type": "string", "pattern": "^FIG-[0-9]{3,}$"},
-        "source_id": {"type": "string", "minLength": 1},
-        "url": {"type": "string", "pattern": "^https?://"},
-        "capture": {"enum": ["full", "viewport", "element", "pdf"]},
-        "selector": {"type": "string"},
-        "wait_ms": {"type": "integer", "minimum": 0, "maximum": 15000},
-        "local_path": {"type": "string", "pattern": "^images/[^/]+\\.png$"},
-        "title": {"type": "string", "minLength": 1},
-        "supports_claim_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
-      }
     },
     "diagram": {
       "type": "object",
-      "additionalProperties": false,
       "required": [
         "fig_id", "title", "visual_type", "source_html", "local_path",
         "size", "detail", "profile", "source_ids", "supports_claim_ids", "alt_text"
@@ -238,50 +150,15 @@
         "visual_type": {"type": "string", "minLength": 1},
         "source_html": {"type": "string", "pattern": "^diagrams/[^/]+\\.html$"},
         "local_path": {"type": "string", "pattern": "^images/[^/]+\\.png$"},
-        "size": {"enum": ["doc-inline", "doc-wide", "slide-16x9", "slide-4x3", "social-og", "social-square", "print-a4-landscape", "print-letter-landscape", "fit"]},
-        "detail": {"enum": ["faithful", "balanced", "simplified"]},
+        "size": {"enum": ["compact", "standard", "doc-wide", "hero"]},
+        "detail": {"enum": ["minimal", "balanced", "rich"]},
         "profile": {"type": "string", "minLength": 1},
-        "source_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
-        "supports_claim_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "source_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "supports_claim_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
         "alt_text": {"type": "string", "minLength": 1}
-      }
-    },
-    "controversy": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "controversy_id", "question", "view_a", "evidence_ids_a",
-        "view_b", "evidence_ids_b", "evidence_comparison", "research_judgment"
-      ],
-      "properties": {
-        "controversy_id": {"type": "string", "pattern": "^ch[0-9]{2}-CV[0-9]{3}$"},
-        "question": {"type": "string", "minLength": 1},
-        "view_a": {"type": "string", "minLength": 1},
-        "evidence_ids_a": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-        "view_b": {"type": "string", "minLength": 1},
-        "evidence_ids_b": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-        "evidence_comparison": {"type": "string"},
-        "research_judgment": {"type": "string"}
-      }
-    },
-    "gap": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "gap_id", "description", "reason", "source_url", "fallback_attempted",
-        "fallback_source_ids", "impact", "disclosed_in_report", "status"
-      ],
-      "properties": {
-        "gap_id": {"type": "string", "pattern": "^ch[0-9]{2}-G[0-9]{3}$"},
-        "description": {"type": "string", "minLength": 1},
-        "reason": {"enum": ["not_found", "login", "captcha", "paywall", "blocked", "timeout", "conflict", "not_public", "other"]},
-        "source_url": {"type": "string"},
-        "fallback_attempted": {"type": "boolean"},
-        "fallback_source_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
-        "impact": {"enum": ["low", "medium", "high", "critical"]},
-        "disclosed_in_report": {"type": "boolean"},
-        "status": {"enum": ["open", "accepted", "resolved"]}
-      }
+      },
+      "additionalProperties": true
     }
-  }
+  },
+  "additionalProperties": true
 }

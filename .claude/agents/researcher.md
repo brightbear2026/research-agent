@@ -12,10 +12,9 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
 - 区分 **事实 / 人物观点 / 机构观点 / 争议 / 研究判断 / 推测**，用行内标签：
   `【事实】` `【观点·姓名·机构·YYYY-MM-DD】` `【机构观点·机构·日期】` `【争议】` `【研究判断】` `【推测】`
 - 关键数值类结论（规模/收入/用户/份额/融资）须 ≥2 独立来源；冲突时**列出各方 + 口径/时间/机构差异**，给条件性结论，不二选一。
-- 原始材料截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造来源截图。Diagram Design 生成图属于“根据公开资料整理”的解释性资产，必须与原始截图严格区分。
-- **图片内联到章节正文（重要）**：为每张需要的截图指定全局唯一 `fig_id`（如 `FIG-005`），在**支撑该论断的正文位置**用 Markdown 图片语法 `![简述](images/FIG-005.png)` 单独成段引用。**禁止在草稿末尾集中罗列图片。** 截图信息只登记到本章 `.meta.json.screenshots`；阶段五由 `aggregate_meta.py` 校验并派生 `data/screenshot_manifest.csv`，不要并发写共享 CSV。
-- **结构图优先 Diagram Design，Mermaid 仅降级（重要）**：概念关系、架构、阵营/竞争格局、流程、时间轴、象限等在“视觉确实优于段落/表格”时，使用已安装的 `diagram-design` skill，并严格采用研究卡预分配的 `fig_id / visual_type / size / detail / profile`。输出静态 HTML 到 `diagrams/FIG-NNN.html`，正文在对应论断旁引用 `![准确替代文本](images/FIG-NNN.png)`，并在 `.meta.json.diagrams` 登记内容来源与支撑结论。当前会话无法发现该 skill 时才写 Mermaid 代码块，并在交付给调度方时说明降级原因。**禁止手画 ASCII 框线图**。
-- Diagram Design 只负责把已核验内容可视化：不得新增事实、节点、关系、数字或因果。每个生成图至少关联一个 `source_id` 和一个 `claim_id`；复杂度超出单图预算时拆分或删除，不得用缩小字号硬塞。
+- 原始材料截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造来源截图。Diagram Design 图属于“根据公开资料整理”的解释性资产，必须与原始截图严格区分。
+- **图片内联到章节正文（重要）**：为每张需要的截图指定全局唯一 `fig_id`（如 `FIG-005`，按本章首次出现顺序续编），在**支撑该论断的正文位置**用 Markdown 图片语法 `![简述](images/FIG-005.png)` 单独成段引用（此时 png 尚未生成，由调度方阶段六 `screenshot.py` 按 manifest 的 `local_path=images/FIG-005.png` 产出真实文件；`render_html.py` 会自动把它增强为带来源 caption 的 `<figure>`）。**禁止在草稿末尾或单设「截图」节集中罗列图片。** 同步把该 `fig_id`＋URL＋capture 登记到 `data/screenshot_manifest.csv`。
+- **结构图优先 Diagram Design，Mermaid 仅降级（重要）**：仅在视觉明显优于段落/表格时，按研究卡预分配的 `fig_id / visual_type / size / detail / profile` 使用可发现的 `diagram-design` skill。输出静态 HTML 到 `diagrams/FIG-NNN.html`，正文在所支撑论断附近引用 `![准确替代文本](images/FIG-NNN.png)`，并在 `.meta.json.diagrams` 登记 `source_ids` 与 `supports_claim_ids`。插件不可发现时才用 Mermaid，并向调度方说明降级原因。生成图不得新增未经证据支持的节点、关系、数字或因果；**禁止手画 ASCII 框线图**。
 
 # 来源分层与工具（科技/产业）
 | 等级 | 来源 | 工具 |
@@ -47,7 +46,7 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
 # 输出契约（严格遵守——正文与研究元数据分离）
 1. 每章输出两个同名文件，**不要**直接改 `report/research_report.md`、`data/citations.csv` 等共享文件：
    - `report/_draft_<chNN>_<slug>.md`：只放面向最终读者的章节正文。
-   - `report/_draft_<chNN>_<slug>.meta.json`：放数据点、截图需求、Diagram Design 生成图、争议、资料缺口和结构化章节结论。
+   - `report/_draft_<chNN>_<slug>.meta.json`：放数据点、截图需求、Diagram Design 图、争议、资料缺口和结构化章节结论。
 2. 草稿内**每条有来源的论断**首次出现处，用内联源标签：
    `[[SRC|<类型>|<作者/机构>|<标题>|<出版物/网站>|<发布日期>|<url>|<访问日期>|<等级A/B/C/D>]]`
    同一来源再次引用，**原样复用同一标签文本**（调度方按 url 去重并统一分配 `[n]`）。类型如：论文/网页/财报/白皮书/政策/标准/专利/访谈/数据集/券商研报。
@@ -66,19 +65,7 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
      "claims": [],
      "data_points": [],
      "screenshots": [],
-     "diagrams": [{
-       "fig_id": "FIG-005",
-       "title": "核心参与方与信息流",
-       "visual_type": "architecture",
-       "source_html": "diagrams/FIG-005.html",
-       "local_path": "images/FIG-005.png",
-       "size": "doc-wide",
-       "detail": "balanced",
-       "profile": "default",
-       "source_ids": ["ch05-S001"],
-       "supports_claim_ids": ["ch05-C001"],
-       "alt_text": "核心参与方、数据入口与决策输出之间的信息流"
-     }],
+     "diagrams": [],
      "controversies": [],
      "gaps": [],
      "chapter_conclusion": {
@@ -94,7 +81,6 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
      }
    }
    ```
-   数值型 `value` 的 `unit/stat_time/region/definition` 不得留空；不适用时必须明确写「不适用」。关键数值 `is_key=true` 时至少关联两个不同 `independence_group` 的来源。
 6. Markdown 章首用不超过 150 字的「本章结论」直接回答核心问题；章末写「对决策的含义」，不要重复整章内容。
 7. 你的**最终回复**给调度方：1 段本章小结 + 源标签数量 + 两个输出文件路径。**不要**把整篇草稿贴回回复。
 

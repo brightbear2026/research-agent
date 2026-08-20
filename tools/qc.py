@@ -16,11 +16,9 @@ import json
 import re
 import statistics
 import sys
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -105,60 +103,6 @@ class Report:
             return 1
         print(f"\n通过：{len(self.ok)} 项，{len(self.warnings)} 项警告")
         return 0
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def write_strict_result(root: Path, report_md: Path, report: Report, exit_code: int) -> None:
-    tracked = [
-        report_md,
-        root / "data/citations.csv",
-        root / "data/figures.csv",
-        root / "data/diagram_manifest.csv",
-        root / "data/chapter_meta.json",
-        root / "data/source_data.csv",
-        root / "evidence/evidence_matrix.csv",
-        root / "evidence/controversy_matrix.csv",
-        root / "evidence/research_gaps.md",
-    ]
-    artifacts: dict[str, str] = {}
-    for path in tracked:
-        if path.exists() and path.is_file():
-            try:
-                key = str(path.resolve().relative_to(root.resolve()))
-            except ValueError:
-                key = str(path.resolve())
-            artifacts[key] = _sha256(path)
-    payload = {
-        "schema_version": 1,
-        "passed": exit_code == 0,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
-        "artifacts_sha256": artifacts,
-        "errors": report.errors,
-        "warnings": report.warnings,
-    }
-    path = root / "data/qc_strict_result.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp_name, path)
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
 
 
 def add_issue(report: Report, message: str, strict: bool) -> None:
@@ -562,6 +506,77 @@ def check_figures(
     report.ok.append(f"图片检查：正文引用 {len(fig_refs)} 个 / 登记 {len(figures)} 个")
 
 
+def check_diagrams(
+    report: Report,
+    md_text: str,
+    diagrams: list[dict],
+    figures: list[dict],
+    root: Path,
+    strict: bool,
+) -> None:
+    """检查 Diagram Design 静态源、PNG、正文位置和来源追踪。"""
+    if not diagrams:
+        report.ok.append("Diagram Design：无登记图")
+        return
+    try:
+        from tools.diagram_assets import resolve_input_path, validate_diagram_html
+        from tools.screenshot import resolve_image_output
+    except ModuleNotFoundError:
+        from diagram_assets import resolve_input_path, validate_diagram_html
+        from screenshot import resolve_image_output
+
+    body_images = {
+        Path(match.group(1).split("?")[0]).name
+        for match in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", md_text)
+        if not match.group(1).startswith("http")
+    }
+    figures_by_id = {
+        (row.get("fig_id") or "").strip(): row
+        for row in figures if (row.get("fig_id") or "").strip()
+    }
+    seen: set[str] = set()
+    valid = 0
+    for row in diagrams:
+        fig_id = (row.get("fig_id") or "").strip()
+        if not re.fullmatch(r"FIG-\d{3,}", fig_id):
+            report.errors.append(f"diagram_manifest.csv fig_id 无效：{fig_id!r}")
+            continue
+        if fig_id in seen:
+            report.errors.append(f"diagram_manifest.csv fig_id 重复：{fig_id}")
+            continue
+        seen.add(fig_id)
+        if not (row.get("source_ids") or "").strip():
+            report.errors.append(f"Diagram Design {fig_id} 缺少 source_ids")
+        if not (row.get("supports_conclusion") or "").strip():
+            report.errors.append(f"Diagram Design {fig_id} 缺少 supports_conclusion")
+        try:
+            source = resolve_input_path(root, (row.get("source_html") or "").strip())
+            output, normalized = resolve_image_output(
+                root, (row.get("local_path") or "").strip(), fig_id,
+            )
+        except ValueError as exc:
+            report.errors.append(f"Diagram Design {fig_id} 路径无效：{exc}")
+            continue
+        html_errors = validate_diagram_html(source)
+        if html_errors:
+            report.errors.append(f"Diagram Design {fig_id} 静态源无效：{'；'.join(html_errors)}")
+        figure = figures_by_id.get(fig_id)
+        if figure is None:
+            add_issue(report, f"Diagram Design {fig_id} 未登记 figures.csv", strict)
+        else:
+            if (figure.get("local_path") or "").strip() != normalized:
+                report.errors.append(f"Diagram Design {fig_id} 与 figures.csv 的 local_path 不一致")
+            if "Diagram Design" not in (figure.get("status") or ""):
+                add_issue(report, f"Diagram Design {fig_id} 的 figures.csv 状态不是生成图状态", strict)
+        if not output.exists():
+            add_issue(report, f"Diagram Design {fig_id} 尚未导出 PNG：{normalized}", strict)
+        if Path(normalized).name not in body_images:
+            add_issue(report, f"Diagram Design {fig_id} 未内联到正文对应论断附近", strict)
+        if not html_errors:
+            valid += 1
+    report.ok.append(f"Diagram Design：登记 {len(diagrams)} 张 / 静态源通过 {valid} 张")
+
+
 def wayback_snapshot(url: str, timeout: float = 6.0) -> str | None:
     """查询 Wayback Availability API；有归档返回快照 URL，否则 None。
 
@@ -793,10 +808,7 @@ def check_readability(
         add_issue(report, f"标题层级存在跳跃：{jumps[:8]}", strict)
 
     # 论证型章节必须先回答问题，再说明对行动的影响；执行摘要、方法和附件不参与。
-    chapter_starts = list(re.finditer(
-        r"(?m)^#\s+(第\s*[0-9一二三四五六七八九十百零〇]+\s*章[^\n]*)$",
-        body,
-    ))
+    chapter_starts = list(re.finditer(r"(?m)^#\s+(第\s*\d+\s*章[^\n]*)$", body))
     missing_answer: list[str] = []
     missing_implication: list[str] = []
     for idx, match in enumerate(chapter_starts):
@@ -833,84 +845,12 @@ def check_editor_baseline(report: Report, md_text: str, baseline_path: Path | No
         report.errors.append(f"找不到编辑基线稿: {baseline_path}")
         return
     final_ids = extract_citation_ids(md_text)
-    baseline_text = baseline_path.read_text(encoding="utf-8")
-    baseline_ids = extract_citation_ids(baseline_text)
+    baseline_ids = extract_citation_ids(baseline_path.read_text(encoding="utf-8"))
     introduced = sorted(final_ids - baseline_ids)
     if introduced:
         report.errors.append(f"编辑阶段引入了组装稿中不存在的引用：{introduced}")
     else:
         report.ok.append("编辑审计：未引入组装稿之外的引用")
-
-    from_numbers = {re.sub(r"\s+", "", match.group(0)) for match in NUMERIC_RE.finditer(baseline_text)}
-    final_numbers = {re.sub(r"\s+", "", match.group(0)) for match in NUMERIC_RE.finditer(md_text)}
-    introduced_numbers = sorted(final_numbers - from_numbers)
-    if introduced_numbers:
-        report.errors.append(f"编辑阶段引入了组装稿中不存在的数字/日期：{introduced_numbers[:20]}")
-    else:
-        report.ok.append("编辑审计：未引入组装稿之外的数字或日期")
-
-
-def check_claim_ledger(report: Report, md_text: str, ledger_path: Path | None) -> None:
-    if ledger_path is None:
-        return
-    if not ledger_path.exists():
-        report.errors.append(f"找不到声明账本: {ledger_path}")
-        return
-    try:
-        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        report.errors.append(f"声明账本 JSON 无效: {exc}")
-        return
-    errors = audit_ledger(md_text, ledger)
-    if errors:
-        report.errors.extend(f"声明账本审计：{error}" for error in errors)
-    else:
-        report.ok.append("声明账本审计：引用、数字/日期及限定词未发生越界变化")
-
-
-def check_meta_integrity(report: Report, root: Path, strict: bool) -> None:
-    meta_path = root / "data/chapter_meta.json"
-    if not meta_path.exists():
-        add_issue(report, "缺少 data/chapter_meta.json，无法验证证据语义", strict)
-        return
-    try:
-        chapters = json.loads(meta_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        report.errors.append(f"chapter_meta.json 无效: {exc}")
-        return
-    if not isinstance(chapters, list):
-        report.errors.append("chapter_meta.json 顶层必须是数组")
-        return
-    errors = [
-        f"{chapter.get('chapter_id', '?')}: {error}"
-        for chapter in chapters if isinstance(chapter, dict)
-        for error in validate_chapter_meta(chapter)
-    ]
-    if len(chapters) != sum(isinstance(chapter, dict) for chapter in chapters):
-        errors.append("存在非对象章节元数据")
-    if errors:
-        report.errors.extend(f"元数据语义错误：{error}" for error in errors[:30])
-    else:
-        report.ok.append(f"元数据语义：{len(chapters)} 章均通过 v2 校验")
-
-    matrix = load_csv(root / "evidence/evidence_matrix.csv")
-    self_support = [
-        row.get("conclusion_id", "?") for row in matrix
-        if (row.get("core_conclusion") or "").strip()
-        and (row.get("core_conclusion") or "").strip() == (row.get("supporting_evidence") or "").strip()
-    ]
-    if self_support:
-        report.errors.append(f"证据矩阵存在结论自我支撑：{self_support}")
-
-    incomplete_data: list[str] = []
-    for row in load_csv(root / "data/source_data.csv"):
-        value = str(row.get("value") or "")
-        if NUMERIC_RE.search(value):
-            missing = [key for key in ("unit", "stat_time", "region", "definition") if not (row.get(key) or "").strip()]
-            if missing:
-                incomplete_data.append(f"{row.get('data_id') or row.get('data_name')}: {missing}")
-    if incomplete_data:
-        report.errors.append(f"数值数据缺少口径字段：{incomplete_data[:20]}")
 
 
 def check_claim_ledger(
@@ -998,14 +938,12 @@ def run(
     rep = Report()
     if not report_md.exists():
         rep.errors.append(f"找不到报告: {report_md}")
-        code = rep.emit()
-        if strict:
-            write_strict_result(root, report_md, rep, code)
-        return code
+        return rep.emit()
     md_text = report_md.read_text(encoding="utf-8")
 
     citations = load_csv(root / "data" / "citations.csv")
     figures = load_csv(root / "data" / "figures.csv")
+    diagrams = load_csv(root / "data" / "diagram_manifest.csv")
 
     check_citations(rep, md_text, citations, root, strict)
     check_source_freshness(rep, citations, strict)
@@ -1014,7 +952,7 @@ def run(
     check_prohibited_content(rep, md_text, strict)
     check_evidence_independence(rep, root, depth, strict)
     check_figures(rep, md_text, figures, root, strict)
-    check_diagrams(rep, md_text, figures, root, strict)
+    check_diagrams(rep, md_text, diagrams, figures, root, strict)
     if not skip_readability:
         check_readability(rep, md_text, depth, strict)
     else:

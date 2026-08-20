@@ -2,9 +2,9 @@
 
 # research-agent · 深度研究代理 / Deep Research Agent
 
-**Claude Code + Codex/ChatGPT Work · 证据驱动 · Playwright 真实截图**
+**Claude Code + Codex/ChatGPT Work + Hermes/Agent-Skills harness · 证据驱动 · Playwright 真实截图**
 
-**Claude Code + Codex/ChatGPT Work · Evidence-driven · Real Playwright screenshots**
+**Claude Code + Codex/ChatGPT Work + Hermes/Agent-Skills harness · Evidence-driven · Real Playwright screenshots**
 
 [中文](#中文) ｜ [English](#english)
 
@@ -14,16 +14,16 @@
 
 ## 中文
 
-一个同时支持 **Claude Code 与 Codex/ChatGPT Work** 的证据驱动深度研究代理。通过统一状态机执行六阶段流程，产出 **Markdown + HTML** 报告、证据矩阵、数据表与资料缺口清单，严守：**不编造、来源分层、交叉验证、声明—证据可追溯、真实截图**。
+一个同时支持 **Claude Code、Codex/ChatGPT Work 与 Hermes/兼容 Agent Skills 的 harness** 的证据驱动深度研究代理。通过统一状态机执行六阶段流程，产出 **Markdown + HTML** 报告、证据矩阵、数据表与资料缺口清单，严守：**不编造、来源分层、交叉验证、声明—证据可追溯、真实截图**。
 
-- **双入口**：Claude Code 命令与 Codex/ChatGPT Work 技能共用同一状态机、schema v2、聚合器和 QC。
+- **三类入口**：Claude Code 命令、Codex/ChatGPT Work 技能与根目录 Agent Skill 共用同一状态机、schema v2、聚合器和 QC。
 - **领域定位**：科技/产业（Web 为主 + 企业官网/财报/白皮书/标准/政策/券商与投行研报）。
 - **截图**：Playwright 真实捕获（失败落占位，绝不伪造）。
-- **解释性结构图**：优先使用可选的 **Diagram Design** 插件；保留可追溯 HTML 源并导出 PNG，插件不可用时降级为 Mermaid。
 
 ### 项目亮点
 
-- **Claude Code 与 Codex/ChatGPT Work 双入口**：两个入口调用同一套状态机和确定性工具，避免行为漂移。
+- **多宿主、单实现**：Claude Code、Codex/ChatGPT Work 与 Hermes/兼容 harness 调用同一套状态机和确定性工具，避免行为漂移。
+- **可选 Diagram Design**：宿主可发现插件时生成可审查 HTML 源并导出 PNG；不可用时降级 Mermaid。生成图只解释已核验证据，不冒充原始截图。
 - **三种执行模式**：常规模式保留阶段确认；计划模式只产出计划；执行模式在仓库流程内连续运行到交付。
 - **机器可执行六阶段状态机**：模式、阶段、确认次数、停止条件和失败预算写入 `.research-workflow.json`，不只依赖提示词约定。
 - **逐章断点续跑 + 子代理熔断**：阶段四登记 `chapter_progress`，中断后跳过已完成且产物配对有效的章节，从首个未完成章节继续；`researcher` 连续 3 轮检索无新进展即返回（不自循环空转），章节重派达 `max_chapter_attempts`（默认 3）后被拒绝再派，防止卡死章节无限烧 token。
@@ -52,7 +52,7 @@
 - 截图必须来自 **Playwright 真实捕获**；失败则落明确标注的占位符，**禁止用 AI 图/拼接冒充原始截图**。
 - 区分 **事实 / 人物观点 / 机构观点 / 行业共识 / 争议 / 研究判断 / 推测**。
 - 关键数值类结论须 **≥2 独立来源**交叉验证；来源冲突时列口径/时间/机构，给**条件性结论**，不二选一。
-- `【事实】` 所在段落必须就近出现 `[n]`；禁用「众所周知 / 毫无疑问 / 必将 / 彻底改变 / 颠覆一切 / 市场前景无限 / 具有重大意义」。结构图用 Mermaid，禁止手画 ASCII/Unicode 框线图；英文直接引语最多 25 词，超出部分改为转述。
+- `【事实】` 所在段落必须就近出现 `[n]`；禁用「众所周知 / 毫无疑问 / 必将 / 彻底改变 / 颠覆一切 / 市场前景无限 / 具有重大意义」。结构图优先 Diagram Design、不可用时用 Mermaid，禁止手画 ASCII/Unicode 框线图；英文直接引语最多 25 词，超出部分改为转述。
 
 ### 适用领域边界
 
@@ -64,8 +64,9 @@
 - **[uv](https://docs.astral.sh/uv/)**（依赖管理）
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/overview)**（CLI 已挂载 WebSearch / WebFetch 等 Web 工具）
 - **Codex/ChatGPT Work**（可选，通过 `.codex/skills/deep-research-work` 入口使用）
+- **Hermes 或兼容 Agent Skills 的 harness**（可选，通过根目录 `SKILL.md`）
 - **Playwright Chromium**（截图用，首次自动安装）
-- **[Diagram Design](https://github.com/cathrynlavery/diagram-design)**（可选但推荐；用于编辑级结构图）
+- **Diagram Design**（可选；各宿主独立安装，不可用时自动降级 Mermaid）
 
 ### 安装
 
@@ -110,6 +111,10 @@ Claude Code 的完整调度规则位于 `.claude/commands/deep-research.md`；�
 
 Codex/ChatGPT Work 会读取同一份 `CLAUDE.md`、`config/workflow_modes.yaml` 和确定性工具。技能入口不会复制或维护另一套研究规则。
 
+### Hermes / Agent-Skills harness 使用方法
+
+根目录 `SKILL.md` 是 Hermes 适配入口，也可被兼容 Agent Skills 的 harness 读取。它复用同一 `CLAUDE.md`、章节代理约束和确定性工具；若你的产品名确实是 Harness 而不是 Hermes，请先确认它支持根目录 Agent Skill 发现与该文件声明的委派工具。
+
 运行中的状态保存在课题目录的 `.research-workflow.json`。需要检查状态时可运行：
 
 ```bash
@@ -123,18 +128,6 @@ uv run python tools/workflow_policy.py next-chapter --root projects/my-topic
 ```
 
 所有产出均落在独立的 `projects/<topic-slug>/`，不会覆盖其他课题。
-
-ChatGPT Work 使用 `chatgpt-work/agent-instructions.md` 作为工作区代理指令。它不会自动读取 `.claude/`，因此两个入口都以 `config/workflow_modes.yaml` 为模式事实源。
-
-### 自治模式
-
-| 模式 | 流程确认 | 停止位置 |
-|---|---|---|
-| 常规 | 阶段一、二、三各确认一次 | 六阶段交付 |
-| 计划 | 大纲后只确认一次是否修改 | 阶段三，等待另行执行 |
-| 执行 | 仓库流程不设置确认点 | 交付物齐全且严格 QC 通过 |
-
-公开第三方来源在计划/执行模式下默认访问，但不绕过权限、登录、验证码、付费墙或网站访问控制。
 
 ### 深度旋钮（depth）
 
@@ -197,7 +190,7 @@ uv run python tools/aggregate_meta.py --root projects/my-topic --force
 uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv \
   --root projects/my-topic --deadline-seconds 600
 
-# Markdown → 单文件 HTML（Diagram Design 使用本地 PNG；降级 Mermaid 依赖 CDN）
+# Markdown → 自包含 HTML（带目录导航/深色模式/打印样式/引用锚点）
 uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
 
 # 生成证据/争议矩阵 + 资料缺口
@@ -251,7 +244,7 @@ projects/my-topic/
 ├── images/FIG-###.png
 ├── diagrams/FIG-###.html
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, broker_report_list, source_index, screenshot_manifest}.csv,
+│        paper_list, broker_report_list, source_index, screenshot_manifest, diagram_manifest}.csv,
 │        {chapter_meta, claim_ledger}.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
@@ -276,16 +269,16 @@ projects/my-topic/
 
 ## English
 
-A reusable, evidence-driven research agent for **Claude Code and Codex/ChatGPT Work**. Both entry points share one executable six-phase state machine, schema v2, deterministic aggregation, claim-ledger editing audit, and strict QC. It delivers **Markdown + HTML** reports, evidence matrices, data tables, and disclosed research gaps.
+A reusable, evidence-driven research agent for **Claude Code, Codex/ChatGPT Work, and Hermes/compatible Agent-Skills harnesses**. All entry points share one executable six-phase state machine, schema v2, deterministic aggregation, claim-ledger editing audit, and strict QC. It delivers **Markdown + HTML** reports, evidence matrices, data tables, and disclosed research gaps.
 
-- **Dual entry points**: Claude Code commands and a Codex/ChatGPT Work skill share the same workflow implementation.
+- **Multiple hosts, one implementation**: Claude Code commands, the Codex/ChatGPT Work skill, and the root Agent Skill share the same workflow implementation.
 - **Domain**: Tech/Industry (Web-first + corporate sites / filings / whitepapers / standards / policy / broker research).
 - **Screenshots**: Playwright real capture (failures get an explicit placeholder, never faked).
-- **Explanatory diagrams**: optional Diagram Design integration keeps editable HTML sources, exports audited PNGs, and falls back to Mermaid when unavailable.
 
 ### Highlights
 
-- **Two entry points, one implementation**: Claude Code and Codex/ChatGPT Work use the same state machine, schema, aggregation, and QC tools.
+- **Multiple hosts, one implementation**: Claude Code, Codex/ChatGPT Work, and Hermes/compatible harnesses use the same state machine, schema, aggregation, and QC tools.
+- **Optional Diagram Design**: when the host exposes the plugin, the workflow keeps auditable HTML sources and exports PNGs; otherwise it falls back to Mermaid. Generated diagrams explain verified evidence and never impersonate source screenshots.
 - **Three workflow modes**: regular checkpoints, plan-only delivery, or continuous execution.
 - **Executable six-phase policy**: phase, confirmation count, stop conditions, failures, and retry budgets are persisted instead of living only in prompts.
 - **Per-chapter resume + subagent fuse**: phase-four progress survives interruptions and skips completed chapters with valid paired artifacts. A `researcher` returns after 3 consecutive rounds with no new verifiable source (no self-looping); chapters that hit `max_chapter_attempts` (default 3) are refused re-dispatch.
@@ -326,8 +319,9 @@ The default rubric is designed for technology and industry research. Medical dia
 - **[uv](https://docs.astral.sh/uv/)** (dependency management)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/overview)** (CLI with WebSearch / WebFetch and other Web tools mounted)
 - **Codex/ChatGPT Work** (optional, via `.codex/skills/deep-research-work`)
+- **Hermes or a compatible Agent-Skills harness** (optional, via root `SKILL.md`)
 - **Playwright Chromium** (for screenshots; installed on first run)
-- **[Diagram Design](https://github.com/cathrynlavery/diagram-design)** (optional, recommended for editorial diagrams)
+- **Diagram Design** (optional, installed separately in each host; Mermaid fallback is automatic)
 
 ### Install
 
@@ -364,6 +358,10 @@ Use $deep-research-work to fully research “inference infrastructure”, depth=
 ```
 
 The skill is located at `.codex/skills/deep-research-work/` and delegates to the same `CLAUDE.md`, `config/workflow_modes.yaml`, and deterministic tools as Claude Code.
+
+### Use with Hermes / an Agent-Skills harness
+
+The root `SKILL.md` is the Hermes adapter and can be discovered by compatible Agent-Skills harnesses. It delegates to the same canonical files. If your product is literally named Harness rather than Hermes, verify that it supports root Agent Skill discovery and the delegation primitives declared in that adapter.
 
 Inspect a running workflow with:
 
@@ -430,11 +428,7 @@ uv run python tools/aggregate_meta.py --root projects/my-topic --force
 uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv \
   --root projects/my-topic --deadline-seconds 600
 
-# Validate Diagram Design HTML; omit --validate-only during delivery to export PNGs
-uv run python tools/diagram_assets.py projects/my-topic/data/diagram_manifest.csv \
-  --root projects/my-topic --validate-only
-
-# Markdown → single-file HTML (Diagram Design uses local PNGs; Mermaid fallback uses CDN)
+# Markdown → self-contained HTML (nav / dark mode / print styles / citation anchors)
 uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
 
 # Build evidence/controversy matrices + research gaps
@@ -489,7 +483,7 @@ projects/my-topic/
 ├── images/FIG-###.png
 ├── diagrams/FIG-###.html
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, broker_report_list, source_index, screenshot_manifest}.csv,
+│        paper_list, broker_report_list, source_index, screenshot_manifest, diagram_manifest}.csv,
 │        {chapter_meta, claim_ledger}.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md

@@ -69,9 +69,9 @@ INDEXES: list[tuple[str, list[str]]] = [
         "alternative_url",
     ]),
     ("data/diagram_manifest.csv", [
-        "fig_id", "source_html", "local_path", "title", "alt_text", "visual_type",
-        "size", "detail", "profile", "source_ids", "source_orgs", "source_docs",
-        "supports_conclusion",
+        "fig_id", "source_html", "local_path", "title", "alt_text",
+        "visual_type", "size", "detail", "profile", "source_ids",
+        "source_orgs", "source_docs", "supports_conclusion",
     ]),
     ("evidence/evidence_matrix.csv", [
         "conclusion_id", "core_conclusion", "supporting_evidence",
@@ -79,8 +79,8 @@ INDEXES: list[tuple[str, list[str]]] = [
         "strong_source_count", "sufficiency", "final_judgment", "limitations",
     ]),
     ("evidence/controversy_matrix.csv", [
-        "controversy_id", "chapter_id", "question", "view_a", "evidence_ids_a", "supporters_a",
-        "view_b", "evidence_ids_b", "supporters_b", "evidence_comparison", "research_judgment",
+        "controversy_id", "question", "view_a", "supporters_a",
+        "view_b", "supporters_b", "evidence_comparison", "research_judgment",
     ]),
 ]
 
@@ -138,8 +138,6 @@ def scaffold(root: Path, force: bool, *, allowed_parent: Path = DEFAULT_PROJECTS
 
     for rel, content in MD_FILES:
         (root / rel).write_text(content, encoding="utf-8")
-
-    (root / "evidence" / "research_gaps.json").write_text("[]\n", encoding="utf-8")
 
     # 报告占位
     (root / "report" / "research_report.md").write_text(

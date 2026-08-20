@@ -38,6 +38,10 @@ class ScaffoldSafetyTests(unittest.TestCase):
             broker_list = root / "data" / "broker_report_list.csv"
             self.assertTrue(broker_list.exists())
             self.assertIn("forecast_horizon", broker_list.read_text(encoding="utf-8"))
+            self.assertTrue((root / "diagrams").is_dir())
+            diagram_manifest = root / "data" / "diagram_manifest.csv"
+            self.assertTrue(diagram_manifest.exists())
+            self.assertIn("source_html", diagram_manifest.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

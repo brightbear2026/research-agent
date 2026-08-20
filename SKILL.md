@@ -88,7 +88,8 @@ cd <skill_dir> && uv run python tools/check_env.py
 3. Project dir = `projects/<topic-slug>` (kebab-case). One slug per topic, never reuse.
 4. Scaffold: `cd <skill_dir> && uv run python tools/scaffold.py projects/<slug>`
 5. Initialize workflow state machine: `uv run python tools/workflow_policy.py init --root projects/<slug> --mode <mode>`
-6. Create todo list with phases 1-6, mark phase 1 in_progress.
+6. Check whether this harness exposes the `diagram-design` skill. If available, write the selected/saved profile to `projects/<slug>/.diagram-design` (otherwise `profile: default`). If unavailable, record a Mermaid fallback and continue without a new checkpoint.
+7. Create todo list with phases 1-6, mark phase 1 in_progress.
 
 ## Phase 1: Research Kickoff
 
@@ -113,6 +114,7 @@ Read the Phase 2 source dimensions from the canonical `.claude/commands/deep-res
 1. Produce `sources/stage3_argument_map.yaml`.
 2. Produce `sources/stage3_outline.md` (three-level outline).
 3. Each chapter lists: reader question, one-line conclusion, role, dependencies, target word count, evidence needed.
+4. Plan Diagram Design only when a relationship, architecture, flow, timeline, quadrant, or competitive landscape is materially clearer than prose/table. Usually cap at two per chapter and record `fig_id`, visual type, size, detail, profile, source IDs, and supported claim IDs.
 
 → Call `advance`. If returns `stop` (plan mode), stop here.
 
@@ -120,6 +122,7 @@ Read the Phase 2 source dimensions from the canonical `.claude/commands/deep-res
 
 1. Register chapters: `uv run python tools/workflow_policy.py register-chapters --root projects/<slug> --chapter ch01 --chapter ch02 ...`
 2. For each chapter, write a research card (based on `templates/research_card.md`).
+   Reserve all screenshot and generated-diagram `fig_id` values globally before parallel dispatch.
 3. **Dispatch researcher subagent via `delegate_task`**. Load the canonical `.claude/agents/researcher.md` as context; `references/researcher_brief.md` is only a pointer and must not be used as the prompt by itself.
 4. Before dispatch: `workflow_policy.py chapter --root projects/<slug> --chapter <chNN> --status in_progress`
 5. After completion: `workflow_policy.py chapter --root projects/<slug> --chapter <chNN> --status completed`
@@ -143,6 +146,7 @@ This deduplicates source tags, assigns global `[n]` citations, generates `data/c
 ```bash
 cd <skill_dir> && uv run python tools/aggregate_meta.py --root projects/<slug> --dry-run  # validate first
 cd <skill_dir> && uv run python tools/aggregate_meta.py --root projects/<slug> --force    # then aggregate
+cd <skill_dir> && uv run python tools/diagram_assets.py projects/<slug>/data/diagram_manifest.csv --root projects/<slug> --validate-only
 ```
 
 ### Step 3: Editor (TOOL-LEVEL ISOLATED — critical red line)
@@ -169,19 +173,20 @@ cd <skill_dir> && uv run python tools/qc.py --root projects/<slug> \
    ```bash
    cd <skill_dir> && uv run python tools/screenshot.py projects/<slug>/data/screenshot_manifest.csv --root projects/<slug> --deadline-seconds 600
    ```
-2. **Render HTML**: `uv run python tools/render_html.py projects/<slug>/report/research_report.md --root projects/<slug>`
-3. **Evidence matrix**: `uv run python tools/evidence.py --root projects/<slug>`
-4. **Final QC** (must pass with `--strict`):
+2. **Diagram Design assets**: `uv run python tools/diagram_assets.py projects/<slug>/data/diagram_manifest.csv --root projects/<slug>`. These are explanatory assets compiled from verified public sources, never original evidence screenshots. An empty manifest is a safe no-op.
+3. **Render HTML**: `uv run python tools/render_html.py projects/<slug>/report/research_report.md --root projects/<slug>`
+4. **Evidence matrix**: `uv run python tools/evidence.py --root projects/<slug>`
+5. **Final QC** (must pass with `--strict`):
    ```bash
    cd <skill_dir> && uv run python tools/qc.py --root projects/<slug> \
      --citation-baseline projects/<slug>/report/_assembled_report.md \
      --claim-ledger projects/<slug>/data/claim_ledger.json \
      --depth <depth> --strict
    ```
-5. **Record advisory QC debt**: `uv run python tools/workflow_policy.py record-debt --root projects/<slug>`.
-6. Write `projects/<slug>/README.md`, including the core QC result and advisory debt summary.
-7. **Deliver to user**: copy all outputs to delivery folder (see Delivery section).
-7. Report to user: paths to MD + HTML + evidence matrix + screenshots + QC results.
+6. **Record advisory QC debt**: `uv run python tools/workflow_policy.py record-debt --root projects/<slug>`.
+7. Write `projects/<slug>/README.md`, including the core QC result and advisory debt summary.
+8. **Deliver to user**: copy all outputs to delivery folder (see Delivery section).
+9. Report to user: paths to MD + HTML + evidence matrix + screenshots/generated diagrams + QC results.
 
 → Call `advance`. Must get `workflow_status=completed`.
 
@@ -199,6 +204,7 @@ Reports are delivered as a standalone folder. By default, deliver to the user's 
 ├── chapter_meta.json     (structured metadata)
 ├── claim_ledger.json     (claim drift audit baseline)
 ├── images/               (screenshots and figures, if any)
+├── diagrams/             (auditable Diagram Design HTML sources, if any)
 └── evidence/
     ├── summary.md
     ├── evidence_matrix.csv
@@ -237,7 +243,7 @@ Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 �
 - Screenshots, links, citation closure, claim-ledger all verified by `qc.py` all-green.
 - All "currently/as of/latest" must have explicit dates.
 - No evidence-free platitudes. Banned phrases: 众所周知/毫无疑问/必将/彻底改变/颠覆一切/市场前景无限/具有重大意义.
-- All diagrams use Mermaid code blocks (no ASCII box-drawing).
+- Prefer Diagram Design for useful structured explanatory visuals when its skill is available; otherwise use Mermaid. Never use ASCII box-drawing.
 - Images inline at supporting arguments, not in appendix.
 
 ## Common Pitfalls
@@ -248,7 +254,7 @@ Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 �
 
 3. **Concentrating screenshots at chapter end** — screenshots must be inline at the argument they support.
 
-4. **Using ASCII box diagrams** — use Mermaid code blocks for all relationship/architecture/flow diagrams.
+4. **Using ASCII box diagrams** — use Diagram Design when available and worthwhile, otherwise Mermaid.
 
 5. **Reusing old project dirs** — each topic gets its own slug directory.
 
@@ -273,10 +279,10 @@ Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 �
 - [ ] Confirmation points match the state machine: regular confirms kickoff/survey/outline; plan confirms outline only; execution has no repository-defined confirmation.
 - [ ] Phase 4: chapters registered via `register-chapters`, all drafts collected with `.md` + `.meta.json` pairs (schema v2)
 - [ ] Phase 5: merge.py ran, aggregate_meta passed, editor ran with `-t file`, post-edit QC + claim-ledger audit passed
-- [ ] Phase 6: screenshots captured, HTML rendered, evidence.py ran, `qc.py --strict --claim-ledger` passed, and `record-debt` completed.
+- [ ] Phase 6: screenshots captured, Diagram Design assets exported (or manifest empty), HTML rendered, evidence.py ran, `qc.py --strict --claim-ledger` passed, and `record-debt` completed.
 - [ ] No `[[SRC` tags remain in final report
 - [ ] No production-process text in reader text
 - [ ] All inline images near supporting arguments
-- [ ] All diagrams use Mermaid
+- [ ] Every generated diagram has source HTML, PNG, `figures.csv` entry, source IDs, supported claim IDs, and a nearby body reference; Mermaid is used only as fallback
 - [ ] Workflow state machine reached `workflow_status=completed`
 - [ ] Report delivered to `<delivery-dir>/<报告名>/`

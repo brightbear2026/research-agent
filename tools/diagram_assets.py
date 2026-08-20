@@ -15,9 +15,9 @@ from datetime import date
 from pathlib import Path
 
 try:
-    from tools.screenshot import load_existing, resolve_output_path, write_figures
+    from tools.screenshot import load_existing, resolve_image_output, write_figures
 except ModuleNotFoundError:  # 直接执行 tools/diagram_assets.py
-    from screenshot import load_existing, resolve_output_path, write_figures
+    from screenshot import load_existing, resolve_image_output, write_figures
 
 SUCCESS_STATUS = "已生成(Diagram Design)"
 FAILURE_STATUS = "失败(Diagram Design)"
@@ -149,7 +149,12 @@ def run(
         seen.add(fig_id)
         try:
             source = resolve_input_path(root, (row.get("source_html") or "").strip())
-            output = resolve_output_path(root, (row.get("local_path") or "").strip())
+            output, normalized_rel = resolve_image_output(
+                root,
+                (row.get("local_path") or "").strip(),
+                fig_id,
+            )
+            row["local_path"] = normalized_rel
         except ValueError as exc:
             failures.append((row, str(exc)))
             continue

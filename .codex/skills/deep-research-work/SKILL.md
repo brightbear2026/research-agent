@@ -13,6 +13,7 @@ Use the repository's deterministic workflow. Do not reproduce the workflow from 
 2. Parse `depth=快速|标准|深度` (default `标准`) and `mode=regular|plan|execution` (default `regular`).
 3. Create a new `projects/<topic-slug>/` directory with `tools/scaffold.py`; never reuse another topic's outputs.
 4. Initialize `tools/workflow_policy.py init --root <project> --mode <mode>`.
+5. Check whether the current host exposes the `diagram-design` skill. If available, write the selected/saved profile to `<project>/.diagram-design` (otherwise `profile: default`). If unavailable, use Mermaid as a non-blocking fallback. Do not add a workflow checkpoint for this choice.
 
 ## Follow the state machine
 
@@ -39,8 +40,9 @@ Make every chapter `.meta.json` conform to `templates/chapter_meta.schema.json` 
 - For numeric evidence, missing unit, time, and region/scope is blocking.
 - Record supporting and opposing evidence explicitly.
 - Give standard/deep chapter conclusions at least two independent sources. Numeric claims always require two independent sources.
+- Use `diagrams` only when a structured visual materially improves comprehension. Each item must use a globally reserved `fig_id`, write `diagrams/FIG-NNN.html`, reference `images/FIG-NNN.png` near the supported claim, and link at least one `source_id` plus one `supports_claim_id`. Generated diagrams explain verified evidence; they are not source evidence or original screenshots.
 
-Run `tools/aggregate_meta.py --dry-run` before `--force`. The force operation backs up existing CSV files before replacement.
+Run `tools/aggregate_meta.py --dry-run` before `--force`. The force operation backs up existing CSV files before replacement. Then run `tools/diagram_assets.py <project>/data/diagram_manifest.csv --root <project> --validate-only` before editing/delivery.
 
 ## Assemble and edit
 
@@ -51,5 +53,7 @@ Edit only for structure, compression, clarity, and deduplication. Preserve factu
 ## Capture and deliver
 
 Use `tools/screenshot.py` with a finite deadline. Keep outputs under `images/`. Do not conceal browser automation or bypass login, CAPTCHA, paywalls, or WAF controls. Record failure category, reason, and alternative source.
+
+After source screenshots, run `tools/diagram_assets.py <project>/data/diagram_manifest.csv --root <project>` to export audited PNGs and merge them into `figures.csv`. If no diagrams were planned, the empty manifest is a safe no-op. Preserve source HTML and label generated figures as compiled from public sources.
 
 Generate HTML and evidence outputs, then run strict QC with both the assembled baseline and claim ledger. Strict QC also blocks uncited fact paragraphs, banned promotional phrases, hand-drawn box diagrams, overlong English quotations, stub-length reports, and insufficient independent support. Delivery is complete only when required artifacts exist, strict QC passes, and the state machine reports `workflow_status=completed`.
