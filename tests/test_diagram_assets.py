@@ -17,6 +17,17 @@ VALID_HTML = """<!doctype html>
 
 
 class DiagramAssetTests(unittest.TestCase):
+    def test_public_readme_example_is_auditable(self) -> None:
+        root = Path(__file__).resolve().parents[1] / "examples" / "diagram-design"
+        manifest = root / "data" / "diagram_manifest.csv"
+        figures = root / "data" / "figures.csv"
+        self.assertEqual(run(manifest, figures, root, validate_only=True), 0)
+        self.assertTrue((root / "images" / "FIG-101.png").read_bytes().startswith(b"\x89PNG"))
+        with figures.open(encoding="utf-8") as handle:
+            row = next(csv.DictReader(handle))
+        self.assertEqual(row["status"], "已生成(Diagram Design)")
+        self.assertEqual(row["supports_conclusion"], "DEMO-C1")
+
     def test_validate_static_accessible_diagram(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "diagram.html"

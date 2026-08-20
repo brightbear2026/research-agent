@@ -35,6 +35,18 @@
 - **券商研报正式入库**：广泛调研主动覆盖券商/投行研报；章节元数据保留分析师、预测期、关键假设、评级/目标价与利益冲突，聚合为 `data/broker_report_list.csv`。预测作为机构观点，底层事实回溯原始来源。
 - **两段式 QC 交付门禁**：核心检查（引用闭环、事实标签同段引用、独立来源、截图、漂移审计、可读性、内容禁忌）`exit 0` 即可交付；死链、链接警告、来源时效、段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json` 异步收尾。**死链永不阻断**——伪造 URL 无 Wayback 归档会在清单显眼标红，真实但反爬/失效的来源由 Wayback 存档佐证。新增段落级数值来源（单 C/D 级来源支撑的【事实】数值）与快变领域来源时效校验。
 
+### Diagram Design 实际效果
+
+下图不是设计稿或模拟图，而是由仓库中的 `tools/diagram_assets.py` 从静态、可审查的 HTML/SVG 源实际导出的 PNG。它展示三个 Agent 宿主如何复用同一研究状态机，以及生成图从已核验内容进入报告与严格 QC 的路径。
+
+![research-agent 多宿主工作流与 Diagram Design 导出示例](examples/diagram-design/images/FIG-101.png)
+
+- [查看可审查 HTML 源](examples/diagram-design/diagrams/FIG-101.html)
+- [查看来源与结论关联清单](examples/diagram-design/data/diagram_manifest.csv)
+- [查看完整复现说明](examples/diagram-design/README.md)
+
+生成图必须关联 `source_ids` 与 `supports_claim_ids`，在正文对应论断附近引用，并登记到 `figures.csv`。它只能解释已核验内容，不能充当新证据或冒充机构原图。
+
 ### 三种运行模式（mode）
 
 | 模式 | 参数 | 仓库内确认点 | 执行范围 | 适用场景 |
@@ -289,6 +301,18 @@ A reusable, evidence-driven research agent for **Claude Code, Codex/ChatGPT Work
 - **Reviewable deliverables**: Markdown, HTML, evidence and controversy matrices, data tables, source indexes, screenshots, and research gaps.
 - **Broker research as a first-class input**: the survey actively covers sell-side reports; chapter metadata preserves analysts, forecast horizons, assumptions, ratings/targets, disclosures, and access limits, then aggregates used reports into `data/broker_report_list.csv`. Forecasts remain institutional views and underlying facts are traced to primary sources.
 - **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — a fabricated URL has no Wayback archive and surfaces red in the debt manifest. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
+
+### Diagram Design output example
+
+The following image is not a mockup. It is the PNG actually exported by `tools/diagram_assets.py` from the repository's static, auditable HTML/SVG source. It shows how three agent hosts share one workflow and how a generated explanatory visual moves from verified content into the report and strict QC.
+
+![research-agent multi-host workflow and Diagram Design export example](examples/diagram-design/images/FIG-101.png)
+
+- [Inspect the auditable HTML source](examples/diagram-design/diagrams/FIG-101.html)
+- [Inspect provenance and supported-claim metadata](examples/diagram-design/data/diagram_manifest.csv)
+- [Read the reproducibility notes](examples/diagram-design/README.md)
+
+Every generated diagram must link `source_ids` and `supports_claim_ids`, appear near the claim it explains, and be indexed in `figures.csv`. It may explain verified content but cannot become new evidence or impersonate an institution's original figure.
 
 ### Workflow Modes
 

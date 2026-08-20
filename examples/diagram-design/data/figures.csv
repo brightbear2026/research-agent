@@ -1,0 +1,2 @@
+fig_id,title,source_org,source_doc,url,publish_date,access_date,page_or_location,supports_conclusion,is_primary_source,local_path,status,failure_category,failure_reason,alternative_url
+FIG-101,One workflow across three agent hosts,根据公开资料整理：research-agent,CLAUDE.md; config/workflow_modes.yaml; SKILL.md,,,2026-08-20,Diagram Design architecture; doc-wide/balanced; profile=default; sources=REPO-WORKFLOW,DEMO-C1,false,images/FIG-101.png,已生成(Diagram Design),,,

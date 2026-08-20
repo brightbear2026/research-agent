@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>One workflow across three agent hosts</title>
+  <style>
+    html,body{margin:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    svg{display:block;width:100%;height:auto}
+    .eyebrow{font-size:15px;font-weight:700;letter-spacing:2.4px;fill:#687083}
+    .title{font-size:42px;font-weight:760;letter-spacing:-1.2px;fill:#111827}
+    .subtitle{font-size:18px;fill:#5f6777}
+    .host-name{font-size:21px;font-weight:720;fill:#172033}
+    .host-detail{font-size:14px;fill:#687083}
+    .stage-num{font-size:13px;font-weight:750;letter-spacing:1px;fill:#6b7280}
+    .stage-name{font-size:19px;font-weight:720;fill:#172033}
+    .stage-detail{font-size:13px;fill:#687083}
+    .pipeline-title{font-size:18px;font-weight:730;fill:#172033}
+    .pipeline-detail{font-size:13px;fill:#687083}
+    .label{font-size:13px;font-weight:700;letter-spacing:1px;fill:#4f5b70}
+  </style>
+</head>
+<body>
+<svg viewBox="0 0 1440 900" role="img" aria-labelledby="diagram-title diagram-desc">
+  <title id="diagram-title">One workflow across three agent hosts</title>
+  <desc id="diagram-desc">Claude Code, Codex, and Hermes enter one shared six-phase research workflow. Verified sources and claims can be converted into an auditable Diagram Design HTML source, exported PNG, figures index, and strict quality check.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fbfbfc"/>
+      <stop offset="1" stop-color="#eef1f6"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5b63d3"/>
+      <stop offset="1" stop-color="#2f8f88"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#19233b" flood-opacity=".10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#929bad"/>
+    </marker>
+  </defs>
+
+  <rect width="1440" height="900" fill="url(#bg)"/>
+  <rect x="48" y="44" width="1344" height="812" rx="30" fill="#ffffff" stroke="#dfe3ea"/>
+
+  <text x="96" y="100" class="eyebrow">RESEARCH-AGENT · MULTI-HOST ARCHITECTURE</text>
+  <text x="96" y="153" class="title">One workflow, three agent hosts</text>
+  <text x="96" y="190" class="subtitle">同一状态机、证据模型与质量门禁，避免不同 Agent 的行为漂移</text>
+
+  <g filter="url(#shadow)">
+    <rect x="96" y="235" width="260" height="112" rx="18" fill="#f7f4ff" stroke="#d8cffb"/>
+    <circle cx="128" cy="270" r="12" fill="#745bd6"/>
+    <text x="154" y="278" class="host-name">Claude Code</text>
+    <text x="128" y="313" class="host-detail">/deep-research command</text>
+
+    <rect x="590" y="235" width="260" height="112" rx="18" fill="#eef7ff" stroke="#c9e1f4"/>
+    <circle cx="622" cy="270" r="12" fill="#347ca5"/>
+    <text x="648" y="278" class="host-name">Codex / Work</text>
+    <text x="622" y="313" class="host-detail">$deep-research-work skill</text>
+
+    <rect x="1084" y="235" width="260" height="112" rx="18" fill="#edf9f6" stroke="#c5e8df"/>
+    <circle cx="1116" cy="270" r="12" fill="#2f8f88"/>
+    <text x="1142" y="278" class="host-name">Hermes</text>
+    <text x="1116" y="313" class="host-detail">root Agent Skill</text>
+  </g>
+
+  <path d="M226 347 V382 H520" fill="none" stroke="#929bad" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <path d="M720 347 V382" fill="none" stroke="#929bad" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <path d="M1214 347 V382 H920" fill="none" stroke="#929bad" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <rect x="520" y="364" width="400" height="38" rx="19" fill="url(#accent)"/>
+  <text x="720" y="389" text-anchor="middle" font-size="15" font-weight="730" fill="#fff">SHARED DETERMINISTIC WORKFLOW</text>
+
+  <g filter="url(#shadow)">
+    <rect x="96" y="438" width="190" height="118" rx="16" fill="#fff" stroke="#dfe3ea"/>
+    <text x="118" y="470" class="stage-num">01</text><text x="118" y="501" class="stage-name">Kickoff</text>
+    <text x="118" y="527" class="stage-detail">scope · questions</text>
+
+    <rect x="308" y="438" width="190" height="118" rx="16" fill="#fff" stroke="#dfe3ea"/>
+    <text x="330" y="470" class="stage-num">02</text><text x="330" y="501" class="stage-name">Survey</text>
+    <text x="330" y="527" class="stage-detail">sources · disputes</text>
+
+    <rect x="520" y="438" width="190" height="118" rx="16" fill="#fff" stroke="#dfe3ea"/>
+    <text x="542" y="470" class="stage-num">03</text><text x="542" y="501" class="stage-name">Outline</text>
+    <text x="542" y="527" class="stage-detail">argument map</text>
+
+    <rect x="732" y="438" width="190" height="118" rx="16" fill="#fff" stroke="#dfe3ea"/>
+    <text x="754" y="470" class="stage-num">04</text><text x="754" y="501" class="stage-name">Research</text>
+    <text x="754" y="527" class="stage-detail">chapter agents</text>
+
+    <rect x="944" y="438" width="190" height="118" rx="16" fill="#fff" stroke="#dfe3ea"/>
+    <text x="966" y="470" class="stage-num">05</text><text x="966" y="501" class="stage-name">Assemble</text>
+    <text x="966" y="527" class="stage-detail">ledger · editing</text>
+
+    <rect x="1156" y="438" width="188" height="118" rx="16" fill="#fff" stroke="#dfe3ea"/>
+    <text x="1178" y="470" class="stage-num">06</text><text x="1178" y="501" class="stage-name">Deliver</text>
+    <text x="1178" y="527" class="stage-detail">HTML · strict QC</text>
+  </g>
+
+  <g stroke="#aab1bf" stroke-width="2" marker-end="url(#arrow)">
+    <path d="M286 497 H302"/><path d="M498 497 H514"/><path d="M710 497 H726"/>
+    <path d="M922 497 H938"/><path d="M1134 497 H1150"/>
+  </g>
+
+  <text x="96" y="615" class="label">AUDITABLE DIAGRAM PATH</text>
+  <rect x="96" y="640" width="1248" height="154" rx="20" fill="#f8fafc" stroke="#dfe3ea"/>
+
+  <g>
+    <rect x="126" y="674" width="230" height="84" rx="14" fill="#fff" stroke="#dfe3ea"/>
+    <text x="150" y="707" class="pipeline-title">Verified content</text>
+    <text x="150" y="734" class="pipeline-detail">source_ids + claim_ids</text>
+
+    <rect x="434" y="674" width="230" height="84" rx="14" fill="#fff" stroke="#d8cffb"/>
+    <text x="458" y="707" class="pipeline-title">Editable HTML</text>
+    <text x="458" y="734" class="pipeline-detail">static, accessible SVG</text>
+
+    <rect x="742" y="674" width="230" height="84" rx="14" fill="#fff" stroke="#c9e1f4"/>
+    <text x="766" y="707" class="pipeline-title">Exported PNG</text>
+    <text x="766" y="734" class="pipeline-detail">figures.csv provenance</text>
+
+    <rect x="1050" y="674" width="264" height="84" rx="14" fill="#edf9f6" stroke="#b7ddd4"/>
+    <text x="1074" y="707" class="pipeline-title">Report + strict QC</text>
+    <text x="1074" y="734" class="pipeline-detail">nearby claim · no fake evidence</text>
+  </g>
+  <g stroke="#929bad" stroke-width="2.2" marker-end="url(#arrow)">
+    <path d="M356 716 H424"/><path d="M664 716 H732"/><path d="M972 716 H1040"/>
+  </g>
+
+  <circle cx="112" cy="827" r="5" fill="#2f8f88"/>
+  <text x="128" y="832" font-size="14" fill="#5f6777">Diagram Design unavailable? The workflow falls back to Mermaid without weakening evidence rules.</text>
+</svg>
+</body>
+</html>
