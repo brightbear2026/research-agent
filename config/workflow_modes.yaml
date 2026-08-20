@@ -1,38 +1,38 @@
-schema_version: 1
+version: 1
 
-common:
-  stages: [1, 2, 3, 4, 5, 6]
-  public_web_access: allowed
-  max_source_attempts: 3
-  retryable_http_statuses: [408, 429, 500, 502, 503, 504]
-  external_blocker_policy:
-    use_fallback_sources: true
-    record_gap: true
-    continue_when_noncritical: true
-    bypass_login_captcha_paywall: false
-  completion_gates:
-    - report/research_report.md
-    - report/research_report.html
-    - data/citations.csv
-    - data/source_data.csv
-    - evidence/evidence_matrix.csv
-    - evidence/controversy_matrix.csv
-    - evidence/research_gaps.md
-    - qc_strict_passed
+phases:
+  - kickoff
+  - survey
+  - outline
+  - research
+  - assemble
+  - deliver
 
 modes:
-  normal:
-    aliases: [normal, regular, 常规, 常规模式]
-    checkpoints_after: [1, 2, 3]
-    stop_after_stage: null
-    workflow_prompts: content_confirmation
+  regular:
+    label: 常规模式
+    auto_access_public_sources: true
+    confirmation_after: [kickoff, survey, outline]
+    stop_after: deliver
   plan:
-    aliases: [plan, 计划, 计划模式]
-    checkpoints_after: [3]
-    stop_after_stage: 3
-    workflow_prompts: outline_revision_only
-  execute:
-    aliases: [execute, execution, 执行, 执行模式]
-    checkpoints_after: []
-    stop_after_stage: 6
-    workflow_prompts: none
+    label: 计划模式
+    auto_access_public_sources: true
+    confirmation_after: [outline]
+    stop_after: outline
+  execution:
+    label: 执行模式
+    auto_access_public_sources: true
+    confirmation_after: []
+    stop_after: deliver
+
+budgets:
+  per_source_retries: 3
+  total_external_failures: 20
+  max_chapter_attempts: 3
+  default_task_deadline_seconds: 3600
+
+external_failure_policy:
+  try_alternative_source: true
+  disclose_gap: true
+  bypass_access_controls: false
+  continue_after_recorded_gap: true

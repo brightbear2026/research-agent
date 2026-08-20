@@ -6,19 +6,21 @@
 
 manifest.csv 列（由 scaffold 生成表头）:
   fig_id,url,capture,selector,wait_ms,local_path,title,source_org,source_doc,
-  publish_date,supports_conclusion,is_primary_source
+  publish_date,supports_conclusion,is_primary_source,alternative_url
 
 - capture ∈ {full, viewport, element, pdf}；
   - full=整页、viewport=视口、element=按 CSS selector 截区块、
   - pdf=下载 PDF 并渲染指定页（selector 填页码，如 "1" / "1-3" / "2,4"，默认第 1 页；多页纵向拼接）。
 - 成功 → 写真实 PNG，status=已截图。
 - 失败 → **绝不伪造**真实内容；写一张**明确标注的占位 PNG**（写明"截图占位/失败原因"），status=失败(占位)。
+- local_path 只能写入项目 `images/`；PDF 与整页截图受文件大小、页数、像素、拼接高度和总任务截止时间限制。
+- 登录、验证码、付费墙、WAF、限流和资源超限分别记录；工具不会绕过访问控制。
 """
 from __future__ import annotations
 
 import argparse
 import csv
-import os
+import re
 import sys
 import tempfile
 import time
@@ -29,18 +31,78 @@ FIGURES_COLS = [
     "fig_id", "title", "source_org", "source_doc", "url",
     "publish_date", "access_date", "page_or_location",
     "supports_conclusion", "is_primary_source", "local_path", "status",
+    "failure_category", "failure_reason", "alternative_url",
 ]
 
 NAV_TIMEOUT_MS = 30000
+MAX_WAIT_MS = 15000
 MAX_PDF_BYTES = 50 * 1024 * 1024
-MAX_PDF_PAGES = 5
-MAX_IMAGE_PIXELS = 40_000_000
+MAX_PDF_PAGES = 1000
+MAX_RENDERED_PAGES = 6
+MAX_IMAGE_PIXELS = 25_000_000
 MAX_STITCH_HEIGHT = 30_000
-MAX_WEB_HEIGHT = 20_000
-RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
+RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+MAX_DOWNLOAD_ATTEMPTS = 3
 VIEWPORT = {"width": 1366, "height": 900}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+
+def resolve_image_output(root: Path, rel: str, fig_id: str) -> tuple[Path, str]:
+    """把输出限制在 <root>/images；返回绝对路径和规范相对路径。"""
+    root = root.resolve()
+    images = (root / "images").resolve()
+    requested = Path((rel or f"images/{fig_id}.png").strip())
+    if requested.is_absolute():
+        raise ValueError("local_path 不得为绝对路径")
+    target = (root / requested).resolve()
+    try:
+        target.relative_to(images)
+    except ValueError as exc:
+        raise ValueError("local_path 必须位于项目 images/ 目录") from exc
+    if target.suffix.lower() != ".png":
+        raise ValueError("截图输出必须使用 .png 扩展名")
+    return target, target.relative_to(root).as_posix()
+
+
+def classify_access_obstacle(text: str, title: str = "") -> str:
+    """按页面可见内容分类外部访问阻碍；不尝试绕过。"""
+    haystack = f"{title}\n{text}".lower()[:20000]
+    categories = (
+        ("验证码", ("captcha", "验证码", "人机验证", "verify you are human")),
+        ("登录要求", ("sign in to continue", "login required", "请登录", "登录后查看")),
+        ("付费墙", ("subscribe to continue", "subscription required", "订阅后阅读", "付费阅读")),
+        ("WAF/访问控制", ("access denied", "request blocked", "web application firewall", "cloudflare ray id", "访问被拒绝")),
+    )
+    for category, markers in categories:
+        if any(marker in haystack for marker in markers):
+            return category
+    return ""
+
+
+def retry_after_seconds(value: str | None, attempt: int) -> float:
+    """Retry-After 秒值优先，否则指数退避；单次最多等待 30 秒。"""
+    if value:
+        try:
+            return min(max(float(value.strip()), 0.0), 30.0)
+        except ValueError:
+            pass
+    return min(2.0 ** (attempt - 1), 30.0)
+
+
+def failure_category(reason: str) -> str:
+    for category in ("验证码", "登录要求", "付费墙", "WAF/访问控制"):
+        if category in reason:
+            return category
+    if "HTTP 429" in reason:
+        return "限流"
+    if "超限" in reason or "截止时间" in reason:
+        return "资源预算"
+    if "路径安全" in reason:
+        return "路径安全"
+    if "超时" in reason or "Transport" in reason:
+        return "网络/超时"
+    return "其他"
 
 
 def find_cjk_font() -> str | None:
@@ -147,6 +209,7 @@ def capture_one(page, row: dict) -> tuple[bool, str]:
         wait = int(row.get("wait_ms") or 1500)
     except ValueError:
         wait = 1500
+    wait = min(max(wait, 0), MAX_WAIT_MS)
     try:
         if selector:
             try:
@@ -154,6 +217,14 @@ def capture_one(page, row: dict) -> tuple[bool, str]:
             except Exception:
                 pass
         page.wait_for_timeout(wait)
+    except Exception:
+        pass
+    try:
+        obstacle = classify_access_obstacle(
+            page.locator("body").inner_text(timeout=3000), page.title()
+        )
+        if obstacle:
+            return False, f"外部访问阻碍: {obstacle}"
     except Exception:
         pass
     return True, ""
@@ -165,20 +236,25 @@ def do_screenshot(page, out_path: Path, capture: str, selector: str) -> tuple[bo
             if not selector:
                 return False, "element 截图缺 selector"
             el = page.locator(selector).first
+            box = el.bounding_box()
+            if box and box["width"] * box["height"] > MAX_IMAGE_PIXELS:
+                return False, "element 截图像素超限"
             el.screenshot(path=str(out_path))
         elif capture == "viewport":
             page.screenshot(path=str(out_path), full_page=False)
         else:  # full
-            height = int(page.evaluate("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"))
-            if height > MAX_WEB_HEIGHT:
-                return False, f"页面高度 {height}px 超过安全上限 {MAX_WEB_HEIGHT}px；请改用 element/viewport"
+            dimensions = page.evaluate("() => ({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})")
+            width = int(dimensions.get("width", VIEWPORT["width"]))
+            height = int(dimensions.get("height", VIEWPORT["height"]))
+            if height > MAX_STITCH_HEIGHT or width * height > MAX_IMAGE_PIXELS:
+                return False, f"整页截图尺寸超限: {width}x{height}"
             page.screenshot(path=str(out_path), full_page=True)
         return True, ""
     except Exception as e:
         return False, f"截图异常: {e}"
 
 
-def parse_pages(spec: str, max_pages: int) -> list[int]:
+def parse_pages(spec: str, max_pages: int, selection_limit: int = MAX_RENDERED_PAGES) -> list[int]:
     """解析页码规格 → 0-based 页索引列表。支持 '1'、'1-3'、'2,4'；默认第 1 页。"""
     spec = (spec or "").strip().lower()
     for tok in ("page", "页", "p", ":"):
@@ -207,62 +283,18 @@ def parse_pages(spec: str, max_pages: int) -> list[int]:
                 out.append(n - 1)
     seen: set[int] = set()
     res = [x for x in out if not (x in seen or seen.add(x))]
+    if len(res) > selection_limit:
+        raise ValueError(f"请求渲染 {len(res)} 页，超过上限 {selection_limit}")
     return res or [0]
 
 
-def download_binary(
+def _capture_pdf_impl(
     url: str,
-    *,
-    max_bytes: int = MAX_PDF_BYTES,
-    max_attempts: int = 3,
-    total_deadline_s: float = 240.0,
-) -> tuple[bytes | None, str, str]:
-    """受限下载；返回 (内容, content-type, 错误)。"""
-    try:
-        import httpx
-    except ImportError as exc:
-        return None, "", f"缺依赖 httpx: {exc}"
-    started = time.monotonic()
-    timeout = httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=10.0)
-    last_error = ""
-    with httpx.Client(timeout=timeout, follow_redirects=True, headers={
-        "User-Agent": UA, "Accept": "application/pdf,*/*",
-    }) as client:
-        for attempt in range(1, max_attempts + 1):
-            if time.monotonic() - started >= total_deadline_s:
-                return None, "", f"超过总下载时限 {total_deadline_s:.0f}s"
-            try:
-                with client.stream("GET", url) as response:
-                    if response.status_code in RETRYABLE_STATUSES:
-                        retry_after = response.headers.get("retry-after", "")
-                        delay = min(float(retry_after), 30.0) if retry_after.isdigit() else min(2 ** (attempt - 1), 8)
-                        last_error = f"HTTP {response.status_code}"
-                        if attempt < max_attempts:
-                            time.sleep(delay)
-                            continue
-                        return None, response.headers.get("content-type", ""), last_error
-                    if response.status_code >= 400:
-                        return None, response.headers.get("content-type", ""), f"HTTP {response.status_code}"
-                    declared = response.headers.get("content-length", "")
-                    if declared.isdigit() and int(declared) > max_bytes:
-                        return None, response.headers.get("content-type", ""), f"文件声明大小超过 {max_bytes} 字节"
-                    payload = bytearray()
-                    for chunk in response.iter_bytes():
-                        if time.monotonic() - started >= total_deadline_s:
-                            return None, response.headers.get("content-type", ""), f"超过总下载时限 {total_deadline_s:.0f}s"
-                        payload.extend(chunk)
-                        if len(payload) > max_bytes:
-                            return None, response.headers.get("content-type", ""), f"文件超过 {max_bytes} 字节"
-                    return bytes(payload), response.headers.get("content-type", ""), ""
-            except httpx.HTTPError as exc:
-                last_error = type(exc).__name__
-                if attempt < max_attempts:
-                    time.sleep(min(2 ** (attempt - 1), 8))
-                    continue
-    return None, "", last_error or "下载失败"
-
-
-def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
+    out_path: Path,
+    page_spec: str,
+    temp_name: str,
+    deadline: float | None = None,
+) -> tuple[bool, str]:
     """下载 PDF 并把指定页渲染成 PNG（多页纵向拼接）。无需浏览器，独立于 Playwright。"""
     try:
         import io
@@ -270,30 +302,85 @@ def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
         from PIL import Image
     except ImportError as e:
         return False, f"缺依赖（pymupdf/httpx/Pillow）: {e}"
-    content, ctype, error = download_binary(url)
-    if content is None:
-        return False, f"PDF 下载失败: {error}"
-    ctype = ctype.lower()
-    is_pdf = ("pdf" in ctype) or url.lower().endswith(".pdf") or content[:5].startswith(b"%PDF-")
-    if not is_pdf:
-        return False, f"非 PDF 内容 (content-type={ctype})"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        doc = pymupdf.open(stream=content, filetype="pdf")
-    except Exception as e:
-        return False, f"PDF 解析失败: {type(e).__name__}"
+        timeout = httpx.Timeout(connect=15.0, read=45.0, write=15.0, pool=15.0)
+        downloaded = False
+        last_reason = "无响应"
+        with httpx.Client(timeout=timeout, follow_redirects=True, headers={
+            "User-Agent": UA, "Accept": "application/pdf,*/*",
+        }) as client:
+            for attempt in range(1, MAX_DOWNLOAD_ATTEMPTS + 1):
+                if deadline is not None and time.monotonic() >= deadline:
+                    return False, "PDF 总任务截止时间已到"
+                try:
+                    with client.stream("GET", url) as response:
+                        if response.status_code in RETRYABLE_STATUS:
+                            last_reason = f"HTTP {response.status_code}"
+                            delay = retry_after_seconds(response.headers.get("retry-after"), attempt)
+                            if attempt < MAX_DOWNLOAD_ATTEMPTS:
+                                if deadline is not None and time.monotonic() + delay >= deadline:
+                                    return False, f"PDF 下载终止: {last_reason}，无剩余重试预算"
+                                time.sleep(delay)
+                                continue
+                            return False, f"PDF 下载失败（有限重试耗尽）: {last_reason}"
+                        if response.status_code >= 400:
+                            return False, f"PDF 下载失败 HTTP {response.status_code}"
+                        length = response.headers.get("content-length")
+                        if length and int(length) > MAX_PDF_BYTES:
+                            return False, f"PDF 文件超限: Content-Length={length}"
+                        total = 0
+                        first = b""
+                        with open(temp_name, "wb") as handle:
+                            for chunk in response.iter_bytes(64 * 1024):
+                                if deadline is not None and time.monotonic() >= deadline:
+                                    return False, "PDF 总任务截止时间已到"
+                                total += len(chunk)
+                                if total > MAX_PDF_BYTES:
+                                    return False, f"PDF 文件超过 {MAX_PDF_BYTES} 字节上限"
+                                if not first:
+                                    first = chunk[:5]
+                                handle.write(chunk)
+                        ctype = response.headers.get("content-type", "").lower()
+                        if "pdf" not in ctype and not first.startswith(b"%PDF-"):
+                            return False, f"非 PDF 内容 (content-type={ctype})"
+                        downloaded = True
+                        break
+                except (httpx.TransportError, httpx.HTTPError, OSError, ValueError) as exc:
+                    last_reason = type(exc).__name__
+                    if attempt < MAX_DOWNLOAD_ATTEMPTS:
+                        delay = retry_after_seconds(None, attempt)
+                        if deadline is not None and time.monotonic() + delay >= deadline:
+                            return False, f"PDF 下载终止: {last_reason}，无剩余重试预算"
+                        time.sleep(delay)
+        if not downloaded:
+            return False, f"PDF 下载失败（有限重试耗尽）: {last_reason}"
+        try:
+            doc = pymupdf.open(temp_name, filetype="pdf")
+        except Exception as exc:
+            return False, f"PDF 解析失败: {type(exc).__name__}"
+    except Exception as exc:
+        return False, f"PDF 下载异常: {type(exc).__name__}"
     if doc.page_count == 0:
-        return False, "PDF 无页面"
-    pages = parse_pages(page_spec, doc.page_count)
-    if len(pages) > MAX_PDF_PAGES:
         doc.close()
-        return False, f"请求渲染 {len(pages)} 页，超过安全上限 {MAX_PDF_PAGES} 页"
+        return False, "PDF 无页面"
+    if doc.page_count > MAX_PDF_PAGES:
+        doc.close()
+        return False, f"PDF 页数超限: {doc.page_count} > {MAX_PDF_PAGES}"
+    try:
+        pages = parse_pages(page_spec, doc.page_count)
+    except ValueError as exc:
+        doc.close()
+        return False, str(exc)
     pngs: list[bytes] = []
     dimensions: list[tuple[int, int]] = []
     for pidx in pages:
         if 0 <= pidx < doc.page_count:
-            pix = doc[pidx].get_pixmap(dpi=150)
-            dimensions.append((pix.width, pix.height))
-            pngs.append(pix.tobytes("png"))
+            pixmap = doc[pidx].get_pixmap(dpi=150)
+            if pixmap.width * pixmap.height > MAX_IMAGE_PIXELS:
+                doc.close()
+                return False, f"PDF 第 {pidx + 1} 页渲染像素超限"
+            pngs.append(pixmap.tobytes("png"))
     doc.close()
     if not pngs:
         return False, "指定页超出范围"
@@ -307,7 +394,10 @@ def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
     else:  # 多页纵向拼接
         ims = [Image.open(io.BytesIO(b)).convert("RGB") for b in pngs]
         w = max(im.width for im in ims)
-        canvas = Image.new("RGB", (w, sum(im.height for im in ims)), "white")
+        height = sum(im.height for im in ims)
+        if height > MAX_STITCH_HEIGHT or w * height > MAX_IMAGE_PIXELS:
+            return False, f"PDF 拼接图片尺寸超限: {w}x{height}"
+        canvas = Image.new("RGB", (w, height), "white")
         y = 0
         for im in ims:
             canvas.paste(im, (0, y))
@@ -316,7 +406,33 @@ def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
     return True, ""
 
 
-def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int:
+def capture_pdf(
+    url: str,
+    out_path: Path,
+    page_spec: str,
+    deadline: float | None = None,
+) -> tuple[bool, str]:
+    """流式下载 PDF，在所有成功/失败路径清理临时文件。"""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix="pdf-download-", suffix=".pdf", dir=out_path.parent, delete=False
+    ) as temp:
+        temp_name = temp.name
+    try:
+        return _capture_pdf_impl(url, out_path, page_spec, temp_name, deadline)
+    finally:
+        Path(temp_name).unlink(missing_ok=True)
+
+
+def run(
+    manifest_path: Path,
+    figures_path: Path,
+    root: Path,
+    force: bool,
+    deadline_seconds: int = 600,
+) -> int:
+    root = root.resolve()
+    deadline = time.monotonic() + max(deadline_seconds, 1)
     if not manifest_path.exists():
         sys.exit(f"✗ 找不到 manifest: {manifest_path}")
     with manifest_path.open(encoding="utf-8") as f:
@@ -345,14 +461,18 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
                 fig_id = (row.get("fig_id") or "").strip()
                 if not fig_id:
                     continue
-                rel = (row.get("local_path") or f"images/{fig_id}.png").strip()
-                try:
-                    out_path = resolve_output_path(root, rel)
-                except ValueError as exc:
-                    print(f"    ✗ {fig_id}: {exc}")
-                    rows[fig_id] = {**row, "fig_id": fig_id, "local_path": rel, "status": "失败(路径越界)"}
+                if not re.fullmatch(r"FIG-\d{3,}", fig_id):
+                    print(f"    ✗ 无效 fig_id（要求 FIG-###）：{fig_id!r}")
                     fail += 1
                     continue
+                try:
+                    out_path, rel = resolve_image_output(
+                        root, row.get("local_path") or f"images/{fig_id}.png", fig_id
+                    )
+                    path_error = ""
+                except ValueError as exc:
+                    out_path, rel = resolve_image_output(root, f"images/{fig_id}.png", fig_id)
+                    path_error = f"路径安全检查失败: {exc}"
                 if fig_id in rows and not force and rows[fig_id].get("status") == "已截图":
                     print(f"  ⊘ 跳过(已截图): {fig_id}")
                     skipped += 1
@@ -364,8 +484,14 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
                 tag = "[PDF]" if is_pdf else ("[element]" if cap == "element" else "")
                 print(f"  → {fig_id} {tag} {url[:80]}")
                 captured, reason = False, ""
-                if is_pdf:
-                    captured, reason = capture_pdf(url, out_path, row.get("selector", ""))
+                if path_error:
+                    reason = path_error
+                elif time.monotonic() >= deadline:
+                    reason = "截图总任务截止时间已到"
+                elif is_pdf:
+                    captured, reason = capture_pdf(
+                        url, out_path, row.get("selector", ""), deadline
+                    )
                 else:
                     nav_ok, reason = capture_one(page, row)
                     if nav_ok:
@@ -393,6 +519,9 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
                     "is_primary_source": row.get("is_primary_source", ""),
                     "local_path": rel,
                     "status": status,
+                    "failure_category": "" if captured else failure_category(reason),
+                    "failure_reason": "" if captured else reason[:1000],
+                    "alternative_url": row.get("alternative_url", ""),
                 }
 
             context.close()
@@ -413,11 +542,14 @@ def main() -> None:
     ap.add_argument("--root", default=".", help="项目根目录（解析 local_path）")
     ap.add_argument("--figures", default=None, help="figures.csv 输出路径（默认 <root>/data/figures.csv）")
     ap.add_argument("--force", action="store_true", help="即使已截图也重拍")
+    ap.add_argument("--deadline-seconds", type=int, default=600,
+                    help="整个截图任务的总时间上限（默认 600 秒）")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
     figures = Path(args.figures).resolve() if args.figures else root / "data" / "figures.csv"
-    sys.exit(run(Path(args.manifest).resolve(), figures, root, args.force))
+    sys.exit(run(Path(args.manifest).resolve(), figures, root, args.force,
+                 args.deadline_seconds))
 
 
 if __name__ == "__main__":

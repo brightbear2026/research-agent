@@ -1,0 +1,4 @@
+interface:
+  display_name: "深度研究工作流"
+  short_description: "以三种模式执行六阶段研究并交付可追溯报告与证据矩阵"
+  default_prompt: "Use $deep-research-work to research this topic and deliver a traceable report."

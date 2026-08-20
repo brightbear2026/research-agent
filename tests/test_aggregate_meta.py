@@ -1,76 +1,154 @@
 from __future__ import annotations
 
 import csv
-import copy
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from tools.aggregate_meta import AggregateError, run
-from tests.test_meta_schema import valid_meta
+from tools.aggregate_meta import emit_broker_reports, emit_evidence, run, validate_chapters
+from tools.migrate_chapter_meta import migrate_chapter
 
 
-class AggregateMetaTests(unittest.TestCase):
-    def prepare(self, root: Path) -> None:
-        (root / "data").mkdir()
-        (root / "evidence").mkdir()
-        (root / "report").mkdir()
-        (root / "data/chapter_meta.json").write_text(
-            json.dumps([valid_meta()], ensure_ascii=False), encoding="utf-8"
-        )
-        (root / "report/_assembled_report.md").write_text("# 第一章\n", encoding="utf-8")
+def valid_chapter() -> dict:
+    return {
+        "schema_version": 2,
+        "chapter_id": "ch01",
+        "title": "章节",
+        "reader_question": "问题？",
+        "thesis": "结论",
+        "argument_role": "论证",
+        "sources": [
+            {"source_id": "S1", "title": "来源一", "url": "https://one.example/a", "organization": "甲", "publish_date": "2025-01-01", "tier": "A", "independence_group": "甲"},
+            {"source_id": "S2", "title": "来源二", "url": "https://two.example/b", "organization": "乙", "publish_date": "2025-02-01", "tier": "B", "independence_group": "乙"},
+        ],
+        "claims": [
+            {"claim_id": "C1", "text": "市场规模为 10 亿元", "source_ids": ["S1", "S2"], "supporting_evidence_ids": ["E1", "E2"], "opposing_evidence_ids": [], "confidence": "高", "limitations": []},
+        ],
+        "data_points": [
+            {"evidence_id": "E1", "claim_id": "C1", "source_ids": ["S1"], "value": 10, "unit": "亿元", "stat_time": "2025", "region": "中国", "population_or_scope": "目标市场", "definition": "公开口径", "confidence": "高", "limitations": []},
+            {"evidence_id": "E2", "claim_id": "C1", "source_ids": ["S2"], "value": 10, "unit": "亿元", "stat_time": "2025", "region": "中国", "population_or_scope": "目标市场", "definition": "公开口径", "confidence": "中高", "limitations": []},
+        ],
+        "screenshots": [],
+        "controversies": [],
+        "gaps": [],
+        "chapter_conclusion": {"claim_id": "C1", "judgment": "市场规模为 10 亿元", "supporting_evidence_ids": ["E1", "E2"], "opposing_evidence_ids": [], "conditions": "公开口径", "time_range": "2025", "confidence": "高", "limitations": [], "decision_implication": "继续观察"},
+    }
 
-    def test_preserves_numeric_semantics_and_real_evidence(self) -> None:
+
+class MigrationTests(unittest.TestCase):
+    def test_v1_migration_preserves_qualifiers_and_does_not_invent_conclusion_support(self) -> None:
+        old = {
+            "chapter_id": "ch01", "title": "章节", "reader_question": "问题？",
+            "thesis": "结论", "argument_role": "论证",
+            "data_points": [{"id": "DP1", "claim": "收入", "value": 10, "unit": "亿元", "stat_time": "2025", "region": "中国", "population_or_scope": "企业", "definition": "财报口径", "source": "年报", "url": "https://example.com/report", "level": "A"}],
+            "screenshots": [], "controversies": [], "gaps": [],
+            "chapter_conclusion": {"judgment": "收入增长", "counter_evidence": "", "conditions": "", "time_range": "2025", "confidence": "高", "decision_implication": ""},
+        }
+        migrated = migrate_chapter(old)
+        point = migrated["data_points"][0]
+        self.assertEqual(point["unit"], "亿元")
+        self.assertEqual(point["stat_time"], "2025")
+        self.assertEqual(point["region"], "中国")
+        self.assertEqual(migrated["chapter_conclusion"]["supporting_evidence_ids"], [])
+        self.assertTrue(any("人工补录" in item for item in migrated["chapter_conclusion"]["limitations"]))
+
+
+class AggregateTests(unittest.TestCase):
+    def test_evidence_matrix_uses_ids_not_conclusion_text_as_support(self) -> None:
+        chapter = valid_chapter()
+        rows = emit_evidence([chapter])
+        self.assertEqual(rows[0]["supporting_evidence"], "E1; E2")
+        self.assertNotEqual(rows[0]["supporting_evidence"], rows[0]["core_conclusion"])
+        self.assertEqual(rows[0]["independent_source_count"], "2")
+        self.assertEqual(rows[0]["strong_source_count"], "2")
+        self.assertEqual(rows[0]["sufficiency"], "充分")
+
+    def test_same_parent_domain_is_not_counted_as_independent(self) -> None:
+        chapter = valid_chapter()
+        for source in chapter["sources"]:
+            source["independence_group"] = None
+            source["organization"] = None
+        chapter["sources"][0]["url"] = "https://news.example.com/a"
+        chapter["sources"][1]["url"] = "https://data.example.com/b"
+        row = emit_evidence([chapter])[0]
+        self.assertEqual(row["independent_source_count"], "1")
+        self.assertEqual(row["sufficiency"], "有限")
+
+    def test_numeric_evidence_requires_qualifiers(self) -> None:
+        chapter = valid_chapter()
+        chapter["data_points"][0]["unit"] = None
+        chapter["data_points"][0]["stat_time"] = None
+        chapter["data_points"][0]["region"] = None
+        chapter["data_points"][0]["population_or_scope"] = None
+        _, result = validate_chapters([chapter])
+        joined = "\n".join(result.errors)
+        self.assertIn("缺少 unit", joined)
+        self.assertIn("缺少 stat_time", joined)
+        self.assertIn("region 或 population_or_scope", joined)
+
+    def test_broker_report_is_emitted_with_research_context(self) -> None:
+        chapter = valid_chapter()
+        chapter["sources"][1].update({
+            "source_type": "broker_report",
+            "organization": "示例证券研究所",
+            "authors": ["分析师甲"],
+            "report_type": "行业深度",
+            "covered_entity_or_industry": "示例行业",
+            "forecast_horizon": "2025-2027",
+            "key_assumptions": ["需求保持增长"],
+            "conflict_disclosure": "见报告末页",
+            "access_date": "2026-08-19",
+            "page_or_location": "第 10-12 页",
+        })
+        syndicated_copy = dict(chapter["sources"][1])
+        syndicated_copy.update({
+            "source_id": "S3",
+            "url": "https://mirror.example/reposted-report",
+        })
+        chapter["sources"].append(syndicated_copy)
+        rows = emit_broker_reports([chapter])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["broker"], "示例证券研究所")
+        self.assertEqual(rows[0]["authors"], "分析师甲")
+        self.assertIn("ch01:C1", rows[0]["used_for"])
+        self.assertEqual(rows[0]["source_id"], "S2; S3")
+
+    def test_validation_failure_does_not_overwrite_existing_csv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.prepare(root)
-            self.assertEqual(run(root, "data/chapter_meta.json"), 0)
-            with (root / "data/source_data.csv").open(encoding="utf-8") as handle:
-                data = list(csv.DictReader(handle))
-            with (root / "evidence/evidence_matrix.csv").open(encoding="utf-8") as handle:
-                evidence = list(csv.DictReader(handle))
-            self.assertEqual(data[0]["unit"], "%")
-            self.assertEqual(data[0]["stat_time"], "2025")
-            self.assertEqual(data[0]["region"], "中国")
-            self.assertNotEqual(evidence[0]["core_conclusion"], evidence[0]["supporting_evidence"])
-            self.assertEqual(evidence[0]["independent_source_groups"], "2")
+            (root / "data").mkdir()
+            (root / "evidence").mkdir()
+            sentinel = root / "data" / "source_data.csv"
+            sentinel.write_text("old,data\n", encoding="utf-8")
+            chapter = valid_chapter()
+            chapter["chapter_conclusion"]["supporting_evidence_ids"] = []
+            (root / "data" / "chapter_meta.json").write_text(json.dumps([chapter], ensure_ascii=False), encoding="utf-8")
+            self.assertEqual(run(root, "data/chapter_meta.json", force=True), 1)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "old,data\n")
 
-    def test_refuses_nonempty_overwrite_without_force(self) -> None:
+    def test_force_writes_all_outputs_and_creates_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.prepare(root)
-            (root / "data/source_data.csv").write_text("a\nold\n", encoding="utf-8")
-            with self.assertRaises(AggregateError):
-                run(root, "data/chapter_meta.json")
-            self.assertEqual((root / "data/source_data.csv").read_text(encoding="utf-8"), "a\nold\n")
+            (root / "data").mkdir()
+            (root / "evidence").mkdir()
+            (root / "data" / "chapter_meta.json").write_text(json.dumps([valid_chapter()], ensure_ascii=False), encoding="utf-8")
+            (root / "data" / "source_data.csv").write_text("old\n", encoding="utf-8")
             self.assertEqual(run(root, "data/chapter_meta.json", force=True), 0)
-            self.assertTrue(any((root / "backups").rglob("source_data.csv")))
+            self.assertTrue((root / "evidence" / "evidence_matrix.csv").exists())
+            self.assertTrue((root / "data" / "broker_report_list.csv").exists())
+            backups = list((root / ".aggregate-backups").glob("*/data/source_data.csv"))
+            self.assertEqual(len(backups), 1)
+            with (root / "data" / "source_data.csv").open(encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertEqual(row["unit"], "亿元")
+            self.assertEqual(row["stat_time"], "2025")
+            self.assertEqual(row["region"], "中国")
 
-    def test_emits_diagram_manifest_with_provenance(self) -> None:
+    def test_meta_path_cannot_escape_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            self.prepare(root)
-            meta = copy.deepcopy(valid_meta())
-            meta["diagrams"] = [{
-                "fig_id": "FIG-101", "title": "信息流", "visual_type": "architecture",
-                "source_html": "diagrams/FIG-101.html", "local_path": "images/FIG-101.png",
-                "size": "doc-wide", "detail": "balanced", "profile": "default",
-                "source_ids": ["ch01-S001"], "supports_claim_ids": ["ch01-C001"],
-                "alt_text": "输入、处理与输出之间的信息流",
-            }]
-            (root / "data/chapter_meta.json").write_text(
-                json.dumps([meta], ensure_ascii=False), encoding="utf-8"
-            )
-            (root / "report/_assembled_report.md").write_text(
-                "# 第一章\n\n![信息流](images/FIG-101.png)\n", encoding="utf-8"
-            )
-            self.assertEqual(run(root, "data/chapter_meta.json"), 0)
-            with (root / "data/diagram_manifest.csv").open(encoding="utf-8") as handle:
-                rows = list(csv.DictReader(handle))
-            self.assertEqual(rows[0]["fig_id"], "FIG-101")
-            self.assertEqual(rows[0]["source_ids"], "ch01-S001")
-            self.assertEqual(rows[0]["supports_conclusion"], "ch01-C001")
+            self.assertEqual(run(root, "../outside.json", dry_run=True), 2)
 
 
 if __name__ == "__main__":

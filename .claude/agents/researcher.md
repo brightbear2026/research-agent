@@ -21,14 +21,28 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
 | 等级 | 来源 | 工具 |
 |---|---|---|
 | A 一级 | 企业官网/年报财报/白皮书/产品文档/标准原文/政府政策/专利/原始演讲访谈 | WebFetch、web_reader 抓官方 URL |
-| B 二级 | 智库/行业协会/分析师/高校/国际机构 | WebSearch + WebFetch |
+| B 二级 | 智库/行业协会/完整具名券商或投行研报/分析师/高校/国际机构 | WebSearch + WebFetch |
 | C 三级 | 主流财经/科技/行业媒体 | WebSearch |
 | D 四级 | 自媒体/聚合/论坛/匿名社媒 | **仅作线索**，不得作关键结论唯一依据 |
 
 优先读一手原文（WebFetch 取正文），不要只看搜索摘要。读到关键图表/数据/原文片段时，记录页码或网页位置。
 
+# 券商研报专项要求
+- 研究卡涉及产业链、公司经营、市场空间、盈利预测、估值或一致预期时，主动加入“券商/投行 + 行业深度/公司深度/盈利预测/equity research/sell-side research”等检索组合。
+- 完整、具名且可追溯的研报通常标 B 级和 `source_type=broker_report`；只有摘要/截图/转载片段时标 C 级，不得据此还原或臆测全文。来源不明的研报聚合页仅作 D 级线索。
+- 评级、目标价、盈利预测、市场空间测算和情景假设必须写成 `【机构观点·券商名称·发布日期】`，不得写成 `【事实】`。研报中的历史数据要追溯财报、政策、标准或原始数据库；无法回溯时明确二手口径与限制。
+- 同一报告的不同转载链接只算一个来源；同一券商研究所默认使用同一 `independence_group`。不同券商观点冲突时保留预测期、关键假设、估值方法和口径差异，写入争议矩阵。
+- 在来源对象中尽量记录 `authors`、`report_type`、`covered_entity_or_industry`、`page_or_location`、`forecast_horizon`、`key_assumptions`、`rating`、`target_price`、`conflict_disclosure` 和 `access_notes`。不绕过登录、验证码、付费墙或授权控制，不传播未授权全文。
+
 # 反向验证（必做）
 对准备写入的重要结论，主动搜索反对意见、不同统计口径、失败案例、技术/商业局限、政策风险、学术争议。研究目标是逼近事实，不是证明预设。
+
+# 熔断（必守——禁止自循环空转）
+研究型检索是开放搜索空间，「再换组关键词/再试一次」永远看似合理，极易陷入对同一维度的无限重试。**连续 3 轮检索无任何新的可验证来源或实质进展，立即停止并返回**，不得自循环：
+- 返回内容：`verified: false` + 已查询的关键词/站点清单 + 已排除的 dead-end + 建议降级处理（改标【推测】、写「暂未找到可靠公开来源」，或交回调度方换维度/换来源层级）。
+- 不得在同一维度反复换措辞重试；不得为了凑来源而降级到 D 级自媒体。
+- 诚实返回「查不到」远优于编造或空转烧 token。调度方会据返回决定升级、转资料缺口或标 failed。
+- 章节级还有硬熔断：同一章被重派达 `max_chapter_attempts`（默认 3）后，`workflow_policy.py` 会拒绝再派——这是兜底，不要依赖它，主动在第 3 轮无进展时返回。
 
 # 输出契约（严格遵守——正文与研究元数据分离）
 1. 每章输出两个同名文件，**不要**直接改 `report/research_report.md`、`data/citations.csv` 等共享文件：
@@ -36,10 +50,10 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
    - `report/_draft_<chNN>_<slug>.meta.json`：放数据点、截图需求、Diagram Design 生成图、争议、资料缺口和结构化章节结论。
 2. 草稿内**每条有来源的论断**首次出现处，用内联源标签：
    `[[SRC|<类型>|<作者/机构>|<标题>|<出版物/网站>|<发布日期>|<url>|<访问日期>|<等级A/B/C/D>]]`
-   同一来源再次引用，**原样复用同一标签文本**（调度方按 url 去重并统一分配 `[n]`）。类型如：论文/网页/财报/白皮书/政策/标准/专利/访谈/数据集。
+   同一来源再次引用，**原样复用同一标签文本**（调度方按 url 去重并统一分配 `[n]`）。类型如：论文/网页/财报/白皮书/政策/标准/专利/访谈/数据集/券商研报。
 3. 草稿用行内标签区分事实/观点/判断，并在争议处简述双方。
 4. **禁止**在 Markdown 正文里出现「数据小表」「建议截图」「供 CSV」「待补充内容」或调度说明。数据点和截图需求只写入 `.meta.json`。
-5. `.meta.json` 必须符合 `templates/chapter_meta.schema.json` v2。结论、证据和来源必须通过 ID 显式关联；不得把 `thesis` 复制到证据字段。最小示例：
+5. `.meta.json` 必须符合 `templates/chapter_meta.schema.json`（schema v2）。每条声明、证据和来源使用稳定 ID 显式关联；不得把声明文本复制成支撑证据。数值证据必须填写单位、统计时间，以及地区或适用范围；无法确认时写 `null` 并在 `limitations` 说明，但该章在补齐前不能通过聚合 QC。最小骨架：
    ```json
    {
      "schema_version": 2,
@@ -48,46 +62,9 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
      "reader_question": "本章替读者回答什么问题",
      "thesis": "本章一句话结论",
      "argument_role": "本章在总论证中的作用",
-     "sources": [{
-       "source_id": "ch05-S001",
-       "type": "网页",
-       "organization": "来源机构",
-       "title": "原始材料标题",
-       "publication": "官方网站",
-       "publish_date": "2025-01-01",
-       "url": "https://example.com/source",
-       "access_date": "2026-08-09",
-       "tier": "A",
-       "independence_group": "来源机构"
-     }],
-     "evidence_items": [{
-       "evidence_id": "ch05-E001",
-       "summary": "原始材料直接显示的事实，不是章节结论的复写",
-       "source_ids": ["ch05-S001"],
-       "stance": "support",
-       "limitations": "材料适用范围"
-     }],
-     "claims": [{
-       "claim_id": "ch05-C001",
-       "statement": "本章结论",
-       "supporting_evidence_ids": ["ch05-E001"],
-       "opposing_evidence_ids": [],
-       "conditions": "适用条件",
-       "confidence": "中",
-       "decision_implication": "行动含义"
-     }],
-     "data_points": [{
-       "data_id": "ch05-D001",
-       "claim": "指标名称",
-       "value": "42",
-       "unit": "%",
-       "stat_time": "2025",
-       "region": "中国",
-       "definition": "指标口径",
-       "source_ids": ["ch05-S001"],
-       "is_key": false,
-       "notes": ""
-     }],
+     "sources": [],
+     "claims": [],
+     "data_points": [],
      "screenshots": [],
      "diagrams": [{
        "fig_id": "FIG-005",
@@ -105,13 +82,15 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
      "controversies": [],
      "gaps": [],
      "chapter_conclusion": {
-       "claim_id": "ch05-C001",
-       "judgment": "本章结论",
-       "counter_evidence": "",
-       "conditions": "适用条件",
-       "time_range": "2025",
+       "claim_id": "ch05-CONCLUSION",
+       "judgment": "",
+       "supporting_evidence_ids": [],
+       "opposing_evidence_ids": [],
+       "conditions": "",
+       "time_range": "",
        "confidence": "中",
-       "decision_implication": "行动含义"
+       "limitations": [],
+       "decision_implication": ""
      }
    }
    ```

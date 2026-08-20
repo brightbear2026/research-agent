@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from tools.merge import TAG_RE, extract_url, main, normalize_tag_inner, parse_fields, strip_internal_sections
+from tools.merge import (
+    TAG_RE, build_refs_md, extract_url, main, norm_key, normalize_tag_inner,
+    parse_fields, strip_internal_sections,
+)
 
 
 class MergeTests(unittest.TestCase):
@@ -27,6 +30,21 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(fields[1], "机构")
         self.assertEqual(fields[5], "https://example.com/a")
         self.assertEqual(fields[7], "A")
+
+    def test_url_key_removes_tracking_fragment_and_normalizes_host(self) -> None:
+        first = "https://www.Example.com/report/?b=2&utm_source=news&a=1#page=3"
+        second = "http://example.com/report?a=1&b=2"
+        self.assertEqual(norm_key(first), norm_key(second))
+
+    def test_doi_and_arxiv_versions_are_canonicalized(self) -> None:
+        self.assertEqual(
+            norm_key("https://dx.doi.org/10.1000/ABC"),
+            norm_key("http://doi.org/10.1000/abc/"),
+        )
+        self.assertEqual(
+            norm_key("https://arxiv.org/pdf/2401.01234v2.pdf"),
+            norm_key("https://www.arxiv.org/abs/2401.01234"),
+        )
 
     def test_internal_sections_are_removed_but_reader_content_remains(self) -> None:
         draft = """# 第一章
@@ -60,6 +78,12 @@ class MergeTests(unittest.TestCase):
         self.assertNotIn("建议截图", cleaned)
         self.assertNotIn("待补充内容", cleaned)
 
+    def test_reference_markdown_contains_no_javascript_handlers(self) -> None:
+        refs = build_refs_md({1: {"title": "来源", "url": "https://example.com"}})
+        self.assertIn('id="ref-1"', refs)
+        self.assertNotIn("javascript:", refs)
+        self.assertNotIn("onclick=", refs)
+
     def test_main_writes_assembly_and_chapter_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -73,35 +97,20 @@ class MergeTests(unittest.TestCase):
                 "\n## 对决策的含义\n\n- 行动。\n",
                 encoding="utf-8",
             )
-            meta = {
+            meta = {key: [] for key in (
+                "data_points", "screenshots", "controversies", "gaps"
+            )}
+            meta.update({
                 "schema_version": 2,
                 "chapter_id": "ch01",
                 "title": "第一章",
                 "reader_question": "问题",
                 "thesis": "结论",
                 "argument_role": "建立前提",
-                "sources": [{
-                    "source_id": "ch01-S001", "type": "网页", "organization": "机构",
-                    "title": "标题", "publication": "官网", "publish_date": "2025-01-01",
-                    "url": "https://example.com/a", "access_date": "2026-01-01",
-                    "tier": "A", "independence_group": "机构",
-                }],
-                "evidence_items": [{
-                    "evidence_id": "ch01-E001", "summary": "来源记载一项可核查事实",
-                    "source_ids": ["ch01-S001"], "stance": "support", "limitations": "",
-                }],
-                "claims": [{
-                    "claim_id": "ch01-C001", "statement": "结论",
-                    "supporting_evidence_ids": ["ch01-E001"], "opposing_evidence_ids": [],
-                    "conditions": "", "confidence": "中", "decision_implication": "行动",
-                }],
-                "data_points": [], "screenshots": [], "controversies": [], "gaps": [],
-                "chapter_conclusion": {
-                    "claim_id": "ch01-C001", "judgment": "结论", "counter_evidence": "",
-                    "conditions": "", "time_range": "2025", "confidence": "中",
-                    "decision_implication": "行动",
-                },
-            }
+                "sources": [],
+                "claims": [],
+                "chapter_conclusion": {},
+            })
             draft.with_suffix(".meta.json").write_text(
                 json.dumps(meta, ensure_ascii=False), encoding="utf-8"
             )
@@ -114,6 +123,8 @@ class MergeTests(unittest.TestCase):
             self.assertNotIn("数据小表", assembled)
             combined = json.loads((root / "data" / "chapter_meta.json").read_text(encoding="utf-8"))
             self.assertEqual(combined[0]["chapter_id"], "ch01")
+            ledger = json.loads((root / "data" / "claim_ledger.json").read_text(encoding="utf-8"))
+            self.assertEqual(ledger["ledger_version"], 1)
 
     def test_require_meta_fails_before_writing_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

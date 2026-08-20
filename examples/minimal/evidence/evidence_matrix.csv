@@ -1,0 +1,2 @@
+conclusion_id,core_conclusion,supporting_evidence,opposing_evidence,source_tier,independent_source_count,strong_source_count,sufficiency,final_judgment,limitations
+EX-C1,三模式共享同一机器可执行状态机,workflow_modes.yaml; workflow_policy.py,,A:2,1,2,有限,配置与状态推进逻辑集中在统一实现中,两个文件来自同一仓库；未验证所有宿主环境与外部网站

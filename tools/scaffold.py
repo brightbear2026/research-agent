@@ -12,6 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PROJECTS_ROOT = REPOSITORY_ROOT / "projects"
+
 # 目录结构: (相对路径, 是否目录)
 TREE: list[tuple[str, bool]] = [
     ("report", True),
@@ -32,12 +35,13 @@ INDEXES: list[tuple[str, list[str]]] = [
         "fig_id", "title", "source_org", "source_doc", "url",
         "publish_date", "access_date", "page_or_location",
         "supports_conclusion", "is_primary_source", "local_path", "status",
+        "failure_category", "failure_reason", "alternative_url",
     ]),
     ("data/tables.csv", ["table_id", "title", "source", "notes"]),
     ("data/source_data.csv", [
-        "data_id", "chapter_id", "data_name", "value", "unit", "stat_time", "region",
-        "definition", "source_ids", "source_urls", "source_orgs", "source_dates", "tiers",
-        "independence_groups", "is_key", "notes",
+        "evidence_id", "claim_id", "data_name", "value", "unit", "stat_time",
+        "region", "population_or_scope", "definition", "source_ids", "source",
+        "source_org", "source_date", "tier", "credibility", "limitations", "notes",
     ]),
     ("data/company_comparison.csv", [
         "dimension", "company_a", "company_b", "company_c", "company_d", "notes",
@@ -47,6 +51,13 @@ INDEXES: list[tuple[str, list[str]]] = [
         "doi", "research_question", "method", "dataset", "core_finding",
         "key_data", "limitations", "relevance", "citation_value",
     ]),
+    ("data/broker_report_list.csv", [
+        "source_id", "broker", "authors", "report_type", "title",
+        "covered_entity_or_industry", "publish_date", "forecast_horizon",
+        "rating", "target_price", "key_assumptions", "primary_data_sources",
+        "conflict_disclosure", "url", "access_date", "page_or_location",
+        "tier", "independence_group", "used_for", "limitations", "access_notes",
+    ]),
     ("data/source_index.csv", [
         "ref_id", "tier", "source_type", "author_org", "title", "url",
         "publish_date", "access_date", "used_for", "notes",
@@ -55,6 +66,7 @@ INDEXES: list[tuple[str, list[str]]] = [
         "fig_id", "url", "capture", "selector", "wait_ms", "local_path",
         "title", "source_org", "source_doc", "publish_date",
         "supports_conclusion", "is_primary_source",
+        "alternative_url",
     ]),
     ("data/diagram_manifest.csv", [
         "fig_id", "source_html", "local_path", "title", "alt_text", "visual_type",
@@ -62,10 +74,9 @@ INDEXES: list[tuple[str, list[str]]] = [
         "supports_conclusion",
     ]),
     ("evidence/evidence_matrix.csv", [
-        "conclusion_id", "chapter_id", "core_conclusion", "supporting_evidence_ids",
-        "supporting_evidence", "opposing_evidence_ids", "opposing_evidence", "source_ids",
-        "source_tier", "independent_source_groups", "sufficiency", "conditions", "confidence",
-        "final_judgment",
+        "conclusion_id", "core_conclusion", "supporting_evidence",
+        "opposing_evidence", "source_tier", "independent_source_count",
+        "strong_source_count", "sufficiency", "final_judgment", "limitations",
     ]),
     ("evidence/controversy_matrix.csv", [
         "controversy_id", "chapter_id", "question", "view_a", "evidence_ids_a", "supporters_a",
@@ -88,7 +99,22 @@ def write_csv_header(path: Path, header: list[str]) -> None:
         csv.writer(f).writerow(header)
 
 
-def scaffold(root: Path, force: bool) -> None:
+def resolve_project_path(project: Path, allowed_parent: Path = DEFAULT_PROJECTS_ROOT) -> Path:
+    """把项目路径限制在 projects 根目录内，阻止绝对路径和 ``..`` 越界。"""
+    parent = allowed_parent.resolve()
+    candidate = project if project.is_absolute() else REPOSITORY_ROOT / project
+    candidate = candidate.resolve()
+    try:
+        relative = candidate.relative_to(parent)
+    except ValueError as exc:
+        raise ValueError(f"项目路径必须位于 {parent} 内：{candidate}") from exc
+    if not relative.parts:
+        raise ValueError(f"不能把 projects 根目录本身作为项目目录：{candidate}")
+    return candidate
+
+
+def scaffold(root: Path, force: bool, *, allowed_parent: Path = DEFAULT_PROJECTS_ROOT) -> None:
+    root = resolve_project_path(root, allowed_parent)
     if root.exists() and any(root.iterdir()):
         if not force:
             sys.exit(f"✗ 目录已存在且非空: {root}（加 --force 覆盖；--force 会先把旧目录备份为 <名>-backup-<时间>，不直接清空）")
@@ -130,10 +156,13 @@ def scaffold(root: Path, force: bool) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="创建深度研究项目目录树")
     ap.add_argument("project", nargs="?", default="projects/research",
-                    help="项目目录名或路径（建议 projects/<课题slug>）")
+                    help="项目路径（必须位于本仓库 projects/<课题slug>）")
     ap.add_argument("--force", action="store_true", help="目录非空时仍覆盖")
     args = ap.parse_args()
-    scaffold(Path(args.project), args.force)
+    try:
+        scaffold(Path(args.project), args.force)
+    except ValueError as exc:
+        sys.exit(f"✗ {exc}")
 
 
 if __name__ == "__main__":

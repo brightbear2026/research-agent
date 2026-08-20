@@ -15,16 +15,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-EV_HEADER = [
-    "conclusion_id", "chapter_id", "core_conclusion", "supporting_evidence_ids",
-    "supporting_evidence", "opposing_evidence_ids", "opposing_evidence", "source_ids",
-    "source_tier", "independent_source_groups", "sufficiency", "conditions", "confidence",
-    "final_judgment",
-]
-CT_HEADER = [
-    "controversy_id", "chapter_id", "question", "view_a", "evidence_ids_a", "supporters_a",
-    "view_b", "evidence_ids_b", "supporters_b", "evidence_comparison", "research_judgment",
-]
+EV_HEADER = ["conclusion_id", "core_conclusion", "supporting_evidence",
+             "opposing_evidence", "source_tier", "sufficiency", "final_judgment",
+             "limitations"]
+CT_HEADER = ["controversy_id", "question", "view_a", "supporters_a",
+             "view_b", "supporters_b", "evidence_comparison", "research_judgment"]
 
 
 def ensure_csv(path: Path, header: list[str]) -> None:

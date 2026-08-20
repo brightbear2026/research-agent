@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://research-agent.local/schemas/chapter-meta-collection-v2.json",
+  "title": "Merged research chapter metadata v2",
+  "type": "array",
+  "items": {"$ref": "chapter_meta.schema.json"}
+}
