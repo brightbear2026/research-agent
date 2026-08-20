@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 import sys
+import tempfile
+import time
 from datetime import date
 from pathlib import Path
 
@@ -29,6 +32,12 @@ FIGURES_COLS = [
 ]
 
 NAV_TIMEOUT_MS = 30000
+MAX_PDF_BYTES = 50 * 1024 * 1024
+MAX_PDF_PAGES = 5
+MAX_IMAGE_PIXELS = 40_000_000
+MAX_STITCH_HEIGHT = 30_000
+MAX_WEB_HEIGHT = 20_000
+RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 VIEWPORT = {"width": 1366, "height": 900}
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
@@ -90,11 +99,37 @@ def load_existing(figures_path: Path) -> dict[str, dict]:
 
 def write_figures(figures_path: Path, rows: dict[str, dict]) -> None:
     figures_path.parent.mkdir(parents=True, exist_ok=True)
-    with figures_path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=FIGURES_COLS)
-        w.writeheader()
-        for fig_id in sorted(rows):
-            w.writerow({k: rows[fig_id].get(k, "") for k in FIGURES_COLS})
+    fd, temp_name = tempfile.mkstemp(prefix=f".{figures_path.name}.", suffix=".tmp", dir=figures_path.parent)
+    try:
+        with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=FIGURES_COLS)
+            w.writeheader()
+            for fig_id in sorted(rows):
+                w.writerow({k: rows[fig_id].get(k, "") for k in FIGURES_COLS})
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_name, figures_path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def resolve_output_path(root: Path, relative: str) -> Path:
+    """截图只能写入 <root>/images，拒绝绝对路径、父目录和符号链接逃逸。"""
+    if not relative or Path(relative).is_absolute():
+        raise ValueError("local_path 必须是 images/ 下的相对 PNG 路径")
+    images_root = (root / "images").resolve()
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(images_root)
+    except ValueError as exc:
+        raise ValueError(f"local_path 越界: {relative}") from exc
+    if candidate.suffix.lower() != ".png":
+        raise ValueError("截图输出必须是 .png")
+    return candidate
 
 
 def capture_one(page, row: dict) -> tuple[bool, str]:
@@ -134,6 +169,9 @@ def do_screenshot(page, out_path: Path, capture: str, selector: str) -> tuple[bo
         elif capture == "viewport":
             page.screenshot(path=str(out_path), full_page=False)
         else:  # full
+            height = int(page.evaluate("Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)"))
+            if height > MAX_WEB_HEIGHT:
+                return False, f"页面高度 {height}px 超过安全上限 {MAX_WEB_HEIGHT}px；请改用 element/viewport"
             page.screenshot(path=str(out_path), full_page=True)
         return True, ""
     except Exception as e:
@@ -172,51 +210,97 @@ def parse_pages(spec: str, max_pages: int) -> list[int]:
     return res or [0]
 
 
+def download_binary(
+    url: str,
+    *,
+    max_bytes: int = MAX_PDF_BYTES,
+    max_attempts: int = 3,
+    total_deadline_s: float = 240.0,
+) -> tuple[bytes | None, str, str]:
+    """受限下载；返回 (内容, content-type, 错误)。"""
+    try:
+        import httpx
+    except ImportError as exc:
+        return None, "", f"缺依赖 httpx: {exc}"
+    started = time.monotonic()
+    timeout = httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=10.0)
+    last_error = ""
+    with httpx.Client(timeout=timeout, follow_redirects=True, headers={
+        "User-Agent": UA, "Accept": "application/pdf,*/*",
+    }) as client:
+        for attempt in range(1, max_attempts + 1):
+            if time.monotonic() - started >= total_deadline_s:
+                return None, "", f"超过总下载时限 {total_deadline_s:.0f}s"
+            try:
+                with client.stream("GET", url) as response:
+                    if response.status_code in RETRYABLE_STATUSES:
+                        retry_after = response.headers.get("retry-after", "")
+                        delay = min(float(retry_after), 30.0) if retry_after.isdigit() else min(2 ** (attempt - 1), 8)
+                        last_error = f"HTTP {response.status_code}"
+                        if attempt < max_attempts:
+                            time.sleep(delay)
+                            continue
+                        return None, response.headers.get("content-type", ""), last_error
+                    if response.status_code >= 400:
+                        return None, response.headers.get("content-type", ""), f"HTTP {response.status_code}"
+                    declared = response.headers.get("content-length", "")
+                    if declared.isdigit() and int(declared) > max_bytes:
+                        return None, response.headers.get("content-type", ""), f"文件声明大小超过 {max_bytes} 字节"
+                    payload = bytearray()
+                    for chunk in response.iter_bytes():
+                        if time.monotonic() - started >= total_deadline_s:
+                            return None, response.headers.get("content-type", ""), f"超过总下载时限 {total_deadline_s:.0f}s"
+                        payload.extend(chunk)
+                        if len(payload) > max_bytes:
+                            return None, response.headers.get("content-type", ""), f"文件超过 {max_bytes} 字节"
+                    return bytes(payload), response.headers.get("content-type", ""), ""
+            except httpx.HTTPError as exc:
+                last_error = type(exc).__name__
+                if attempt < max_attempts:
+                    time.sleep(min(2 ** (attempt - 1), 8))
+                    continue
+    return None, "", last_error or "下载失败"
+
+
 def capture_pdf(url: str, out_path: Path, page_spec: str) -> tuple[bool, str]:
     """下载 PDF 并把指定页渲染成 PNG（多页纵向拼接）。无需浏览器，独立于 Playwright。"""
     try:
         import io
-        import httpx
         import pymupdf
         from PIL import Image
     except ImportError as e:
         return False, f"缺依赖（pymupdf/httpx/Pillow）: {e}"
-    try:
-        # arXiv 等学术 PDF 体积大、链路慢，30s 常超时；给 180s + 一次重试
-        r = None
-        for attempt in (1, 2):
-            try:
-                r = httpx.get(url, timeout=180.0, follow_redirects=True, headers={
-                    "User-Agent": UA, "Accept": "application/pdf,*/*",
-                })
-                break
-            except (httpx.TransportError, httpx.HTTPError) as e:
-                if attempt == 2:
-                    raise
-        if r is None:
-            return False, "PDF 下载异常: 无响应"
-    except Exception as e:
-        return False, f"PDF 下载异常: {type(e).__name__}"
-    if r.status_code >= 400:
-        return False, f"PDF 下载失败 HTTP {r.status_code}"
-    ctype = r.headers.get("content-type", "").lower()
-    is_pdf = ("pdf" in ctype) or url.lower().endswith(".pdf") or r.content[:5].startswith(b"%PDF-")
+    content, ctype, error = download_binary(url)
+    if content is None:
+        return False, f"PDF 下载失败: {error}"
+    ctype = ctype.lower()
+    is_pdf = ("pdf" in ctype) or url.lower().endswith(".pdf") or content[:5].startswith(b"%PDF-")
     if not is_pdf:
         return False, f"非 PDF 内容 (content-type={ctype})"
     try:
-        doc = pymupdf.open(stream=r.content, filetype="pdf")
+        doc = pymupdf.open(stream=content, filetype="pdf")
     except Exception as e:
         return False, f"PDF 解析失败: {type(e).__name__}"
     if doc.page_count == 0:
         return False, "PDF 无页面"
     pages = parse_pages(page_spec, doc.page_count)
+    if len(pages) > MAX_PDF_PAGES:
+        doc.close()
+        return False, f"请求渲染 {len(pages)} 页，超过安全上限 {MAX_PDF_PAGES} 页"
     pngs: list[bytes] = []
+    dimensions: list[tuple[int, int]] = []
     for pidx in pages:
         if 0 <= pidx < doc.page_count:
-            pngs.append(doc[pidx].get_pixmap(dpi=150).tobytes("png"))
+            pix = doc[pidx].get_pixmap(dpi=150)
+            dimensions.append((pix.width, pix.height))
+            pngs.append(pix.tobytes("png"))
     doc.close()
     if not pngs:
         return False, "指定页超出范围"
+    total_pixels = sum(width * height for width, height in dimensions)
+    total_height = sum(height for _, height in dimensions)
+    if total_pixels > MAX_IMAGE_PIXELS or total_height > MAX_STITCH_HEIGHT:
+        return False, f"渲染尺寸超过安全上限（{total_pixels} 像素 / {total_height}px 高）"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     if len(pngs) == 1:
         out_path.write_bytes(pngs[0])
@@ -254,7 +338,7 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(viewport=VIEWPORT, user_agent=UA)
+            context = browser.new_context(viewport=VIEWPORT, user_agent=UA, locale="zh-CN")
             page = context.new_page()
 
             for row in manifest:
@@ -262,7 +346,13 @@ def run(manifest_path: Path, figures_path: Path, root: Path, force: bool) -> int
                 if not fig_id:
                     continue
                 rel = (row.get("local_path") or f"images/{fig_id}.png").strip()
-                out_path = root / rel  # local_path 相对于项目根解析
+                try:
+                    out_path = resolve_output_path(root, rel)
+                except ValueError as exc:
+                    print(f"    ✗ {fig_id}: {exc}")
+                    rows[fig_id] = {**row, "fig_id": fig_id, "local_path": rel, "status": "失败(路径越界)"}
+                    fail += 1
+                    continue
                 if fig_id in rows and not force and rows[fig_id].get("status") == "已截图":
                     print(f"  ⊘ 跳过(已截图): {fig_id}")
                     skipped += 1

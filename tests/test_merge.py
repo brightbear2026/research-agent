@@ -73,17 +73,35 @@ class MergeTests(unittest.TestCase):
                 "\n## 对决策的含义\n\n- 行动。\n",
                 encoding="utf-8",
             )
-            meta = {key: [] for key in (
-                "data_points", "screenshots", "controversies", "gaps"
-            )}
-            meta.update({
+            meta = {
+                "schema_version": 2,
                 "chapter_id": "ch01",
                 "title": "第一章",
                 "reader_question": "问题",
                 "thesis": "结论",
                 "argument_role": "建立前提",
-                "chapter_conclusion": {},
-            })
+                "sources": [{
+                    "source_id": "ch01-S001", "type": "网页", "organization": "机构",
+                    "title": "标题", "publication": "官网", "publish_date": "2025-01-01",
+                    "url": "https://example.com/a", "access_date": "2026-01-01",
+                    "tier": "A", "independence_group": "机构",
+                }],
+                "evidence_items": [{
+                    "evidence_id": "ch01-E001", "summary": "来源记载一项可核查事实",
+                    "source_ids": ["ch01-S001"], "stance": "support", "limitations": "",
+                }],
+                "claims": [{
+                    "claim_id": "ch01-C001", "statement": "结论",
+                    "supporting_evidence_ids": ["ch01-E001"], "opposing_evidence_ids": [],
+                    "conditions": "", "confidence": "中", "decision_implication": "行动",
+                }],
+                "data_points": [], "screenshots": [], "controversies": [], "gaps": [],
+                "chapter_conclusion": {
+                    "claim_id": "ch01-C001", "judgment": "结论", "counter_evidence": "",
+                    "conditions": "", "time_range": "2025", "confidence": "中",
+                    "decision_implication": "行动",
+                },
+            }
             draft.with_suffix(".meta.json").write_text(
                 json.dumps(meta, ensure_ascii=False), encoding="utf-8"
             )

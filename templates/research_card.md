@@ -20,6 +20,16 @@
 - **需查找的人物观点**：
 - **需查找的企业方案**：
 - **需制作的图表**：
+  - Diagram Design（仅在视觉优于段落/表格时）：
+    - `fig_id`（调度方预分配，禁止子代理自选）：
+    - `visual_type`：
+    - `size`（报告默认 `doc-wide`）：
+    - `detail`（默认 `balanced`）：
+    - `profile`（来自课题目录 `.diagram-design`）：
+    - `source_ids`（图中内容来源）：
+    - `supports_claim_ids`（图所支撑结论）：
+    - `alt_text`：
+  - 若当前会话不可发现 `diagram-design`：降级为 Mermaid，并记录原因；不要伪装成 Diagram Design 资产。
 - **需截取的原始材料**（登记到 `data/screenshot_manifest.csv`，由调度方 Phase 6 统一执行 `screenshot.py`）：
   - **对象类型清单**（按需勾选；优先一级来源；每张须支持某条具体结论）：
     - [ ] 标准/框架原文页（OWASP / MITRE ATLAS / NIST AI RMF / ISO 42001 / MAESTRO / TC260…）

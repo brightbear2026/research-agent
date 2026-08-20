@@ -29,6 +29,11 @@ from pathlib import Path
 
 import yaml
 
+try:
+    from tools.meta_schema import validate_chapter_meta
+except ModuleNotFoundError:  # 直接执行 tools/merge.py
+    from meta_schema import validate_chapter_meta
+
 TAG_RE = re.compile(r"\[\[SRC(?:\\?\|)(.*?)\]\]")
 URL_RE = re.compile(r"https?://[^\s|]+")
 TIER_RE = re.compile(r"\|([ABCD])\]\]\s*$")
@@ -209,7 +214,10 @@ def main() -> int:
                 missing_keys = sorted(META_REQUIRED_KEYS - set(meta))
                 if missing_keys and args.require_meta:
                     raise ValueError(f"缺少字段: {missing_keys}")
-                meta["_draft_file"] = d.name
+                if args.require_meta:
+                    schema_errors = validate_chapter_meta(meta)
+                    if schema_errors:
+                        raise ValueError("chapter_meta v2 语义校验失败: " + "; ".join(schema_errors))
                 chapter_meta.append(meta)
             except (json.JSONDecodeError, ValueError) as e:
                 sys.exit(f"✗ 无法解析章节元数据 {meta_path}: {e}")

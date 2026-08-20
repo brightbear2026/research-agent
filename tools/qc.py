@@ -11,13 +11,27 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
+import os
 import re
 import statistics
 import sys
+import tempfile
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+
+try:
+    from tools.claim_ledger import audit_ledger
+    from tools.diagram_assets import resolve_input_path, validate_diagram_html
+    from tools.meta_schema import NUMERIC_RE, validate_chapter_meta
+except ModuleNotFoundError:  # 直接执行 tools/qc.py
+    from claim_ledger import audit_ledger
+    from diagram_assets import resolve_input_path, validate_diagram_html
+    from meta_schema import NUMERIC_RE, validate_chapter_meta
 
 SEARCH_HOSTS = {"google.com", "www.google.com", "bing.com", "www.bing.com",
                 "baidu.com", "www.baidu.com", "duckduckgo.com", "www.duckduckgo.com"}
@@ -66,6 +80,60 @@ class Report:
             return 1
         print(f"\n通过：{len(self.ok)} 项，{len(self.warnings)} 项警告")
         return 0
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_strict_result(root: Path, report_md: Path, report: Report, exit_code: int) -> None:
+    tracked = [
+        report_md,
+        root / "data/citations.csv",
+        root / "data/figures.csv",
+        root / "data/diagram_manifest.csv",
+        root / "data/chapter_meta.json",
+        root / "data/source_data.csv",
+        root / "evidence/evidence_matrix.csv",
+        root / "evidence/controversy_matrix.csv",
+        root / "evidence/research_gaps.md",
+    ]
+    artifacts: dict[str, str] = {}
+    for path in tracked:
+        if path.exists() and path.is_file():
+            try:
+                key = str(path.resolve().relative_to(root.resolve()))
+            except ValueError:
+                key = str(path.resolve())
+            artifacts[key] = _sha256(path)
+    payload = {
+        "schema_version": 1,
+        "passed": exit_code == 0,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "artifacts_sha256": artifacts,
+        "errors": report.errors,
+        "warnings": report.warnings,
+    }
+    path = root / "data/qc_strict_result.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def add_issue(report: Report, message: str, strict: bool) -> None:
@@ -171,6 +239,65 @@ def check_figures(
     report.ok.append(f"图片检查：正文引用 {len(fig_refs)} 个 / 登记 {len(figures)} 个")
 
 
+def check_diagrams(
+    report: Report,
+    md_text: str,
+    figures: list[dict],
+    root: Path,
+    strict: bool,
+) -> None:
+    """验证 Diagram Design 源、PNG、正文引用和 figures 索引形成闭环。"""
+    manifest = load_csv(root / "data/diagram_manifest.csv")
+    if not manifest:
+        report.ok.append("Diagram Design：无登记资产")
+        return
+    figure_rows = {row.get("fig_id", ""): row for row in figures}
+    referenced = {
+        Path(match.group(1).split("?", 1)[0]).name
+        for match in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", md_text)
+        if not match.group(1).startswith("http")
+    }
+    seen: set[str] = set()
+    for row in manifest:
+        fig_id = (row.get("fig_id") or "").strip()
+        if not fig_id:
+            report.errors.append("diagram_manifest.csv 存在空 fig_id")
+            continue
+        if fig_id in seen:
+            report.errors.append(f"diagram_manifest.csv 存在重复 fig_id: {fig_id}")
+            continue
+        seen.add(fig_id)
+        try:
+            source = resolve_input_path(root, (row.get("source_html") or "").strip())
+        except ValueError as exc:
+            report.errors.append(f"Diagram Design {fig_id} 路径错误：{exc}")
+            continue
+        html_errors = validate_diagram_html(source)
+        if html_errors:
+            report.errors.append(f"Diagram Design {fig_id} 源文件不合格：{'; '.join(html_errors)}")
+        local_path = (row.get("local_path") or "").strip()
+        output = (root / local_path).resolve()
+        try:
+            output.relative_to((root / "images").resolve())
+        except ValueError:
+            report.errors.append(f"Diagram Design {fig_id} PNG 路径越界：{local_path}")
+            continue
+        if not output.exists():
+            add_issue(report, f"Diagram Design {fig_id} 尚未导出 PNG：{local_path}", strict)
+        if output.name not in referenced:
+            add_issue(report, f"Diagram Design {fig_id} 未内联到正文", strict)
+        indexed = figure_rows.get(fig_id)
+        if not indexed:
+            add_issue(report, f"Diagram Design {fig_id} 未登记到 figures.csv", strict)
+        elif indexed.get("status") != "已生成(Diagram Design)":
+            add_issue(report, f"Diagram Design {fig_id} 状态不是成功：{indexed.get('status', '')}", strict)
+        if not (row.get("source_ids") or "").strip():
+            report.errors.append(f"Diagram Design {fig_id} 缺少内容来源关联")
+        if not (row.get("supports_conclusion") or "").strip():
+            report.errors.append(f"Diagram Design {fig_id} 缺少结论关联")
+    report.ok.append(f"Diagram Design：登记 {len(manifest)} 个资产并检查源文件/PNG/索引")
+
+
 def classify_url(url: str) -> tuple[str, str]:
     try:
         import httpx
@@ -193,10 +320,10 @@ def classify_url(url: str) -> tuple[str, str]:
             if 300 <= r.status_code < 400:
                 loc = r.headers.get("location", "")
                 return ("warn", f"重定向 {r.status_code} → {loc}")
-            # 400/401/403/429 通常是反爬/请求被拒/限流而非真死链
-            # （来源经研究期 WebFetch 或 Playwright 截图验证存在）
-            if r.status_code in (400, 401, 403, 429):
-                return ("warn", f"HTTP {r.status_code}（疑似反爬/限流/需鉴权，建议人工核）")
+            # 这些状态都表示本次检查未能确认页面可访问；HTTP 412 可能来自
+            # 条件请求、网关策略或 WAF，不能只凭状态码断言是反爬。
+            if r.status_code in (400, 401, 403, 412, 429):
+                return ("warn", f"HTTP {r.status_code}（原因未确认，需用正文读取或替代来源复核）")
             if r.status_code >= 400:
                 return ("dead", f"HTTP {r.status_code}")
             return ("ok", f"HTTP {r.status_code}")
@@ -344,7 +471,10 @@ def check_readability(
         add_issue(report, f"标题层级存在跳跃：{jumps[:8]}", strict)
 
     # 论证型章节必须先回答问题，再说明对行动的影响；执行摘要、方法和附件不参与。
-    chapter_starts = list(re.finditer(r"(?m)^#\s+(第\s*\d+\s*章[^\n]*)$", body))
+    chapter_starts = list(re.finditer(
+        r"(?m)^#\s+(第\s*[0-9一二三四五六七八九十百零〇]+\s*章[^\n]*)$",
+        body,
+    ))
     missing_answer: list[str] = []
     missing_implication: list[str] = []
     for idx, match in enumerate(chapter_starts):
@@ -381,12 +511,84 @@ def check_editor_baseline(report: Report, md_text: str, baseline_path: Path | No
         report.errors.append(f"找不到编辑基线稿: {baseline_path}")
         return
     final_ids = extract_citation_ids(md_text)
-    baseline_ids = extract_citation_ids(baseline_path.read_text(encoding="utf-8"))
+    baseline_text = baseline_path.read_text(encoding="utf-8")
+    baseline_ids = extract_citation_ids(baseline_text)
     introduced = sorted(final_ids - baseline_ids)
     if introduced:
         report.errors.append(f"编辑阶段引入了组装稿中不存在的引用：{introduced}")
     else:
         report.ok.append("编辑审计：未引入组装稿之外的引用")
+
+    from_numbers = {re.sub(r"\s+", "", match.group(0)) for match in NUMERIC_RE.finditer(baseline_text)}
+    final_numbers = {re.sub(r"\s+", "", match.group(0)) for match in NUMERIC_RE.finditer(md_text)}
+    introduced_numbers = sorted(final_numbers - from_numbers)
+    if introduced_numbers:
+        report.errors.append(f"编辑阶段引入了组装稿中不存在的数字/日期：{introduced_numbers[:20]}")
+    else:
+        report.ok.append("编辑审计：未引入组装稿之外的数字或日期")
+
+
+def check_claim_ledger(report: Report, md_text: str, ledger_path: Path | None) -> None:
+    if ledger_path is None:
+        return
+    if not ledger_path.exists():
+        report.errors.append(f"找不到声明账本: {ledger_path}")
+        return
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        report.errors.append(f"声明账本 JSON 无效: {exc}")
+        return
+    errors = audit_ledger(md_text, ledger)
+    if errors:
+        report.errors.extend(f"声明账本审计：{error}" for error in errors)
+    else:
+        report.ok.append("声明账本审计：引用、数字/日期及限定词未发生越界变化")
+
+
+def check_meta_integrity(report: Report, root: Path, strict: bool) -> None:
+    meta_path = root / "data/chapter_meta.json"
+    if not meta_path.exists():
+        add_issue(report, "缺少 data/chapter_meta.json，无法验证证据语义", strict)
+        return
+    try:
+        chapters = json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        report.errors.append(f"chapter_meta.json 无效: {exc}")
+        return
+    if not isinstance(chapters, list):
+        report.errors.append("chapter_meta.json 顶层必须是数组")
+        return
+    errors = [
+        f"{chapter.get('chapter_id', '?')}: {error}"
+        for chapter in chapters if isinstance(chapter, dict)
+        for error in validate_chapter_meta(chapter)
+    ]
+    if len(chapters) != sum(isinstance(chapter, dict) for chapter in chapters):
+        errors.append("存在非对象章节元数据")
+    if errors:
+        report.errors.extend(f"元数据语义错误：{error}" for error in errors[:30])
+    else:
+        report.ok.append(f"元数据语义：{len(chapters)} 章均通过 v2 校验")
+
+    matrix = load_csv(root / "evidence/evidence_matrix.csv")
+    self_support = [
+        row.get("conclusion_id", "?") for row in matrix
+        if (row.get("core_conclusion") or "").strip()
+        and (row.get("core_conclusion") or "").strip() == (row.get("supporting_evidence") or "").strip()
+    ]
+    if self_support:
+        report.errors.append(f"证据矩阵存在结论自我支撑：{self_support}")
+
+    incomplete_data: list[str] = []
+    for row in load_csv(root / "data/source_data.csv"):
+        value = str(row.get("value") or "")
+        if NUMERIC_RE.search(value):
+            missing = [key for key in ("unit", "stat_time", "region", "definition") if not (row.get(key) or "").strip()]
+            if missing:
+                incomplete_data.append(f"{row.get('data_id') or row.get('data_name')}: {missing}")
+    if incomplete_data:
+        report.errors.append(f"数值数据缺少口径字段：{incomplete_data[:20]}")
 
 
 def run(
@@ -397,11 +599,15 @@ def run(
     depth: str = "标准",
     skip_readability: bool = False,
     citation_baseline: Path | None = None,
+    claim_ledger: Path | None = None,
 ) -> int:
     rep = Report()
     if not report_md.exists():
         rep.errors.append(f"找不到报告: {report_md}")
-        return rep.emit()
+        code = rep.emit()
+        if strict:
+            write_strict_result(root, report_md, rep, code)
+        return code
     md_text = report_md.read_text(encoding="utf-8")
 
     citations = load_csv(root / "data" / "citations.csv")
@@ -409,11 +615,14 @@ def run(
 
     check_citations(rep, md_text, citations, root, strict)
     check_figures(rep, md_text, figures, root, strict)
+    check_diagrams(rep, md_text, figures, root, strict)
     if not skip_readability:
         check_readability(rep, md_text, depth, strict)
     else:
         rep.ok.append("可读性检查：已跳过 (--skip-readability)")
     check_editor_baseline(rep, md_text, citation_baseline)
+    check_claim_ledger(rep, md_text, claim_ledger)
+    check_meta_integrity(rep, root, strict)
     if not skip_links:
         check_links(rep, citations, figures)
     else:
@@ -425,7 +634,10 @@ def run(
         rep.ok.append(f"HTML 已生成: {html.name}")
     else:
         add_issue(rep, f"HTML 未生成或为空: {html.name}（运行 render_html.py）", strict)
-    return rep.emit()
+    code = rep.emit()
+    if strict:
+        write_strict_result(root, report_md, rep, code)
+    return code
 
 
 def main() -> None:
@@ -439,12 +651,17 @@ def main() -> None:
     ap.add_argument("--skip-readability", action="store_true", help="跳过可读性检查")
     ap.add_argument("--citation-baseline", default=None,
                     help="总编辑前的组装稿；校验终稿未创造新引用")
+    ap.add_argument("--claim-ledger", default=None,
+                    help="总编辑前生成的声明账本 JSON；校验数字、日期和限定词漂移")
     args = ap.parse_args()
     root = Path(args.root).resolve()
     report_md = Path(args.report).resolve() if args.report else root / "report" / "research_report.md"
     baseline = Path(args.citation_baseline).resolve() if args.citation_baseline else None
+    ledger = Path(args.claim_ledger).resolve() if args.claim_ledger else (
+        root / "evidence/claim_ledger.json" if (root / "evidence/claim_ledger.json").exists() else None
+    )
     sys.exit(run(root, report_md, args.skip_links, args.strict, args.depth,
-                 args.skip_readability, baseline))
+                 args.skip_readability, baseline, ledger))
 
 
 if __name__ == "__main__":

@@ -2,8 +2,8 @@
 
 # research-agent · 深度研究代理 / Deep Research Agent
 
-**Claude Code 原生 · 科技/产业 · Playwright 真实截图**
-**Claude Code-native · Tech/Industry · Playwright real screenshots**
+**Claude Code + ChatGPT Work · 三种自治模式 · 可审计证据链**
+**Claude Code + ChatGPT Work · Three autonomy modes · Auditable evidence**
 
 [中文](#中文) ｜ [English](#english)
 
@@ -13,11 +13,12 @@
 
 ## 中文
 
-把「深度课题研究与双格式报告生成」规范做成一个可复用的 **Claude Code 研究代理**。以 `/deep-research <课题>` 触发，按 **6 阶段**（调研 → 证据库 → 大纲 → 分章深研 → 双格式交付）产出 **Markdown + HTML** 报告与证据矩阵，严守：**不编造、来源分层、交叉验证、区分事实/观点/判断、真实可溯源截图**。
+把「深度课题研究与双格式报告生成」规范做成可由 **Claude Code 或 ChatGPT Work** 调度的研究代理。按 **6 阶段**产出 **Markdown + HTML** 报告、v2 证据矩阵与资料缺口清单。
 
-- **实现形态**：Claude Code 原生（自定义 agent + 分阶段命令 + 辅助 Python 脚本）。
+- **实现形态**：统一 Python 状态机与确定性工具 + Claude Code / ChatGPT Work 两个适配入口。
 - **领域定位**：科技/产业（Web 为主 + 企业官网/财报/白皮书/标准/政策）。
 - **截图**：Playwright 真实捕获（失败落占位，绝不伪造）。
+- **解释性结构图**：优先使用可选的 **Diagram Design** 插件；保留可追溯 HTML 源并导出 PNG，插件不可用时降级为 Mermaid。
 
 ### 核心红线
 
@@ -33,6 +34,7 @@
 - **[uv](https://docs.astral.sh/uv/)**（依赖管理）
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/overview)**（CLI 已挂载 WebSearch / WebFetch 等 Web 工具）
 - **Playwright Chromium**（截图用，首次自动安装）
+- **[Diagram Design](https://github.com/cathrynlavery/diagram-design)**（可选但推荐；用于编辑级结构图）
 
 ### 快速开始
 
@@ -43,12 +45,28 @@ cd research-agent
 uv sync
 uv run playwright install chromium   # 首次需要，约下载 ~150MB
 
-# 2) 在 Claude Code 内打开本目录后触发研究
+# 2) 在 Claude Code 中安装 Diagram Design（每台 Claude Code 环境一次）
+/plugin marketplace add cathrynlavery/diagram-design
+/plugin install diagram-design@diagram-design
+
+# 3) 在 Claude Code 内打开本目录后触发研究
 #    （在 Claude Code 会话中运行）
-/deep-research <你的课题> depth=标准
+/deep-research <你的课题> depth=标准 mode=执行
 ```
 
 产出落在 `projects/my-topic/`（可改名）。
+
+ChatGPT Work 使用 `chatgpt-work/agent-instructions.md` 作为工作区代理指令。它不会自动读取 `.claude/`，因此两个入口都以 `config/workflow_modes.yaml` 为模式事实源。
+
+### 自治模式
+
+| 模式 | 流程确认 | 停止位置 |
+|---|---|---|
+| 常规 | 阶段一、二、三各确认一次 | 六阶段交付 |
+| 计划 | 大纲后只确认一次是否修改 | 阶段三，等待另行执行 |
+| 执行 | 仓库流程不设置确认点 | 交付物齐全且严格 QC 通过 |
+
+公开第三方来源在计划/执行模式下默认访问，但不绕过权限、登录、验证码、付费墙或网站访问控制。
 
 ### 深度旋钮（depth）
 
@@ -60,12 +78,12 @@ uv run playwright install chromium   # 首次需要，约下载 ~150MB
 
 ### 六阶段流程
 
-1. **启动**：课题定义/边界、≥15 个研究问题、中英文关键词矩阵 → 检查点
-2. **广泛调研**：论文/人物/头部企业/政策标准/数据/案例 6 张清单 → 检查点
-3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再生成动态大纲 → 检查点
-4. **分章深研**：每章写「研究卡」，并行派发 `researcher`；读者正文与 `.meta.json` 分离
-5. **组装与总编辑**：标签去重 → 全局 `[n]` → `_assembled_report.md` → 总编辑压缩、去重、重组为终稿
-6. **交付**：截图 → 渲染 HTML → 证据矩阵 → `qc.py --strict`（含可读性）→ README
+1. **启动**：课题定义/边界、≥15 个研究问题、中英文关键词矩阵
+2. **广泛调研**：论文/人物/头部企业/政策标准/数据/案例 6 张清单
+3. **论证地图与大纲**：先确定总论点、分论点和依赖关系，再规划真正需要的 Diagram Design 图
+4. **分章深研**：每章写「研究卡」，并行派发 `researcher`；读者正文、元数据和可编辑图源分离
+5. **组装与总编辑**：标签去重 → v2 聚合 → Diagram Design 静态校验 → 受限总编辑
+6. **交付**：真实截图 + Diagram Design PNG → HTML → 证据矩阵 → `qc.py --strict` → README
 
 ### 目录结构
 
@@ -75,10 +93,12 @@ uv run playwright install chromium   # 首次需要，约下载 ~150MB
 ├── commands/deep-research.md       # L2 调度方（六阶段 + 检查点 + 合并协议，canonical）
 ├── skills/deep-research/SKILL.md   # 技能入口（可发现摘要）
 └── settings.json                   # 工具命令权限白名单
+chatgpt-work/                       # ChatGPT Work 工作区代理适配说明
+config/workflow_modes.yaml          # 三模式与完成条件的唯一事实源
 CLAUDE.md                           # 项目约定（红线/来源分层/标签/引用/目录契约）
 references/source_rubric.md         # 来源可信度 A/B/C/D 分级表
 templates/                          # 报告骨架、HTML 模板、元数据、研究卡、截图清单
-tools/                              # 确定性工具（scaffold/screenshot/render_html/evidence/qc/charts）
+tools/                              # 确定性工具（含 diagram_assets 静态校验与导出桥）
 ```
 
 ### 工具一览（统一前缀 `uv run python tools/xxx.py`）
@@ -90,10 +110,21 @@ uv run python tools/scaffold.py projects/my-topic
 # 确定性组装（产出 _assembled_report.md + citations.csv）
 uv run python tools/merge.py projects/my-topic --require-meta --title "报告标题"
 
+# 校验 v2 元数据并原子派生数据/证据/截图/Diagram Design/缺口索引
+uv run python tools/aggregate_meta.py --root projects/my-topic --force
+
+# 校验 Diagram Design 静态源；交付阶段去掉 --validate-only 即导出 PNG
+uv run python tools/diagram_assets.py projects/my-topic/data/diagram_manifest.csv \
+  --root projects/my-topic --validate-only
+
+# 总编辑前建立声明账本
+uv run python tools/claim_ledger.py create projects/my-topic/report/_assembled_report.md \
+  --out projects/my-topic/evidence/claim_ledger.json
+
 # Playwright 真实截图（读 manifest，写 figures.csv）
 uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
 
-# Markdown → 自包含 HTML（带目录导航/深色模式/打印样式/引用锚点）
+# Markdown → 单文件 HTML（Diagram Design 使用本地 PNG；降级 Mermaid 依赖 CDN）
 uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
 
 # 生成证据/争议矩阵 + 资料缺口
@@ -101,7 +132,8 @@ uv run python tools/evidence.py --root projects/my-topic
 
 # 终检：引用闭环 + 链接 + 截图 + 可读性 + 编辑引用审计
 uv run python tools/qc.py --root projects/my-topic --strict \
-  --citation-baseline projects/my-topic/report/_assembled_report.md
+  --citation-baseline projects/my-topic/report/_assembled_report.md \
+  --claim-ledger projects/my-topic/evidence/claim_ledger.json
 
 # 自制图表（标题自动标注「数据来源：根据公开资料整理/计算」）
 uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/FIG-005.png --title "..." --source "..."
@@ -132,7 +164,8 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py --strict` 校验：正文 `[n]` ↔ citations.csv 闭环、图片对应、链接活性、内部材料残留、篇幅/句段长度以及总编辑未创造新引用。
+- Diagram Design 图由 `diagrams/FIG-###.html` 派生，`data/diagram_manifest.csv` 保存类型、尺寸、profile、内容来源和支撑结论。
+- `qc.py --strict` 校验：引用闭环、图片、Diagram Design 源/PNG/索引、链接、chapter_meta v2、数值口径、可读性，以及总编辑未新增引用/数字/日期或删除关键限定词。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
@@ -141,8 +174,9 @@ projects/my-topic/
 ├── README.md
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
+├── diagrams/FIG-###.html
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, source_index, screenshot_manifest}.csv, chapter_meta.json
+│        paper_list, source_index, screenshot_manifest, diagram_manifest}.csv, chapter_meta.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
 ```
@@ -158,11 +192,12 @@ projects/my-topic/
 
 ## English
 
-A reusable **Claude Code research agent** that operationalizes a "deep research + dual-format report" specification. Triggered by `/deep-research <topic>`, it runs a **6-phase pipeline** (research → evidence base → outline → per-chapter deep research → dual-format delivery) and produces **Markdown + HTML** reports with an evidence matrix — while strictly enforcing: **no fabrication, source tiering, cross-validation, fact/opinion/judgment distinction, and real traceable screenshots**.
+A reusable research agent for **Claude Code and ChatGPT Work**. A shared state machine and deterministic tool layer run a six-phase pipeline and produce Markdown + HTML reports, v2 evidence matrices, and explicit research gaps.
 
-- **Form**: Claude Code-native (custom agent + staged command + helper Python scripts).
+- **Form**: shared Python workflow/tooling with Claude Code and ChatGPT Work adapters.
 - **Domain**: Tech/Industry (Web-first + corporate sites / filings / whitepapers / standards / policy).
 - **Screenshots**: Playwright real capture (failures get an explicit placeholder, never faked).
+- **Explanatory diagrams**: optional Diagram Design integration keeps editable HTML sources, exports audited PNGs, and falls back to Mermaid when unavailable.
 
 ### Core Red Lines
 
@@ -178,6 +213,7 @@ A reusable **Claude Code research agent** that operationalizes a "deep research 
 - **[uv](https://docs.astral.sh/uv/)** (dependency management)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code/overview)** (CLI with WebSearch / WebFetch and other Web tools mounted)
 - **Playwright Chromium** (for screenshots; installed on first run)
+- **[Diagram Design](https://github.com/cathrynlavery/diagram-design)** (optional, recommended for editorial diagrams)
 
 ### Quick Start
 
@@ -190,7 +226,7 @@ uv run playwright install chromium   # first run only, ~150MB download
 
 # 2) Trigger research inside Claude Code
 #    (run within a Claude Code session in this directory)
-/deep-research <your topic> depth=standard
+/deep-research <your topic> depth=standard mode=execute
 ```
 
 Output lands in `projects/my-topic/` (renameable).
@@ -205,12 +241,12 @@ Output lands in `projects/my-topic/` (renameable).
 
 ### Six-Phase Pipeline
 
-1. **Kickoff**: scope/boundaries, ≥15 research questions, bilingual keyword matrix → checkpoint
-2. **Broad survey**: 6 lists (papers / people / leading companies / policy & standards / data / cases) → checkpoint
-3. **Argument map + outline**: define thesis, claims, dependencies and evidence before the dynamic outline → checkpoint
-4. **Per-chapter research**: dispatch `researcher` subagents; keep reader-facing Markdown separate from `.meta.json`
-5. **Assemble + edit**: dedupe source tags → `_assembled_report.md` → constrained editor compresses and restructures the final narrative
-6. **Deliver**: screenshots → render HTML → evidence matrix → strict QC including readability → README
+1. **Kickoff**: scope/boundaries, ≥15 research questions, bilingual keyword matrix
+2. **Broad survey**: 6 lists (papers / people / leading companies / policy & standards / data / cases)
+3. **Argument map + outline**: define thesis, claims, dependencies, evidence, and warranted diagrams
+4. **Per-chapter research**: keep Markdown, metadata, and editable diagram sources separate
+5. **Assemble + edit**: aggregate v2 metadata → validate Diagram Design sources → constrained editing
+6. **Deliver**: screenshots + diagram PNG export → HTML → evidence matrix → strict QC → README
 
 ### Directory Layout
 
@@ -223,7 +259,7 @@ Output lands in `projects/my-topic/` (renameable).
 CLAUDE.md                           # Project conventions (red lines / tiers / tags / citations / layout)
 references/source_rubric.md         # A/B/C/D source credibility rubric
 templates/                          # report skeleton, HTML template, metadata, research card, screenshot manifest
-tools/                              # deterministic tools (scaffold/screenshot/render_html/evidence/qc/charts)
+tools/                              # deterministic tools, including the Diagram Design validation/export bridge
 ```
 
 ### Tools (common prefix `uv run python tools/xxx.py`)
@@ -238,7 +274,11 @@ uv run python tools/merge.py projects/my-topic --require-meta --title "Report ti
 # Playwright real screenshots (reads manifest, writes figures.csv)
 uv run python tools/screenshot.py projects/my-topic/data/screenshot_manifest.csv --root projects/my-topic
 
-# Markdown → self-contained HTML (nav / dark mode / print styles / citation anchors)
+# Validate Diagram Design HTML; omit --validate-only during delivery to export PNGs
+uv run python tools/diagram_assets.py projects/my-topic/data/diagram_manifest.csv \
+  --root projects/my-topic --validate-only
+
+# Markdown → single-file HTML (Diagram Design uses local PNGs; Mermaid fallback uses CDN)
 uv run python tools/render_html.py projects/my-topic/report/research_report.md --root projects/my-topic
 
 # Build evidence/controversy matrices + research gaps
@@ -286,8 +326,9 @@ projects/my-topic/
 ├── README.md
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
+├── diagrams/FIG-###.html
 ├── data/{citations, figures, tables, source_data, company_comparison,
-│        paper_list, source_index, screenshot_manifest}.csv, chapter_meta.json
+│        paper_list, source_index, screenshot_manifest, diagram_manifest}.csv, chapter_meta.json
 ├── evidence/{evidence_matrix, controversy_matrix}.csv, research_gaps.md
 └── sources/{bibliography, source_index}.md
 ```

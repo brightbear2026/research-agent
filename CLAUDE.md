@@ -1,6 +1,6 @@
 # 研究代理项目约定（research-agent）
 
-本仓库是一个 **Claude Code 原生深度研究代理**：以 `/deep-research <课题>` 触发，按 6 阶段执行「调研→证据库→大纲→分章深研→双格式交付」，最终在 `projects/<课题slug>/`（如 `projects/ai-agent-security`）落地 Markdown + HTML 报告与证据矩阵——**每个课题一个独立 slug 文件夹，互不覆盖**。领域定位：**科技/产业**。
+本仓库是一个可由 **Claude Code 或 ChatGPT Work** 调度的深度研究代理：按 `config/workflow_modes.yaml` 的常规/计划/执行模式运行 6 阶段，最终在 `projects/<课题slug>/` 落地 Markdown + HTML 报告、v2 证据矩阵和资料缺口清单。Claude Code 入口为 `/deep-research`；ChatGPT Work 入口说明见 `chatgpt-work/`。
 
 ## 不可违反的红线
 - **不编造**：论文、作者、人物发言、数据、公司方案、市场规模、URL、截图、政策、产品能力、访谈、页码、日期——一律不得虚构。
@@ -32,9 +32,9 @@
 ## 引用与单一事实源
 - 正文用 `[n]` 编号引用，每个 `[n]` 必须在 `data/citations.csv` 中登记（作者/标题/出版物/日期/DOI/原始链接/访问日期/页码）。
 - **Markdown 为规范叙事（canonical）**：`report/_assembled_report.md` 是确定性组装稿，经 `report-editor` 只做压缩、去重和重组后生成 `report/research_report.md` 终稿；HTML 再由 `tools/render_html.py` 从终稿 + 旁路索引派生，禁止两版分别手写。
-- 自制图表标题统一标「数据来源：根据公开资料整理/计算」，不得冒充机构原图。
+- 自制图表与 Diagram Design 生成图统一标「数据来源：根据公开资料整理/计算」，不得冒充机构原图。生成图必须在 chapter_meta 的 `diagrams` 中关联内容来源和所支撑结论。
 - **截图/自制图表内联到所支撑的章节正文**：在相关论断处用 Markdown 图片语法 `![简述](images/FIG-NNN.png)` 单独成段展示；**不得在附录或报告末尾集中罗列图片**。`data/figures.csv` 仅作旁路索引（供 caption、`qc.py` 校验），不是展示位置。
-- **结构化关系图统一用 Mermaid**：概念关系图、架构图、阵营/竞争格局图、流程图、时间轴等用 mermaid 代码块（fence 语言标注 `mermaid`），由 `render_html.py` 自动渲染为拓扑图；**禁止手画 ASCII 框线图**（`┌─┐│└┘├┤┬▼` 制表符拼接的关系图）——其无法被渲染器图形化，HTML 里仅作裸文本，丧失排版价值。
+- **结构化关系图优先 Diagram Design**：概念关系、架构、阵营/竞争格局、流程、时间轴、象限等在视觉确实优于段落/表格时，优先产出 `diagrams/FIG-NNN.html`，再由 `tools/diagram_assets.py` 校验并导出 `images/FIG-NNN.png`。插件在当前宿主不可用时才降级为 Mermaid；**禁止手画 ASCII 框线图**。不把所有 Mermaid 机械重画，简单关系或临时过程图可保留 Mermaid。
 
 ## 交付目录契约（由 `tools/scaffold.py` 生成）
 ```
@@ -42,7 +42,8 @@ projects/<课题slug>/
 ├── README.md
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
-├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md, chapter_meta.json}
+├── diagrams/FIG-###.html
+├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, source_index.csv, screenshot_manifest.csv, diagram_manifest.csv, glossary.md, chapter_meta.json}
 ├── evidence/{evidence_matrix.csv, controversy_matrix.csv, research_gaps.md}
 └── sources/{bibliography.md, source_index.md}
 ```
@@ -56,7 +57,11 @@ Skill 接收 `depth=快速|标准|深度`（默认「标准」）：
 ## 运行工具（统一前缀 `uv run python tools/xxx.py`）
 - `scaffold.py <项目名>`：建交付目录树 + 空索引。
 - `screenshot.py <manifest.csv>`：真实截图（`full`/`viewport`/`element` 区块/`pdf` 指定页）+ 写 `figures.csv`。
-- `render_html.py <md> <out.html>`：渲染自包含 HTML。
+- `diagram_assets.py <diagram_manifest.csv> --root <项目>`：校验 Diagram Design 静态 HTML、导出 PNG、合并写 `figures.csv`。
+- `aggregate_meta.py --root <项目>`：校验 chapter_meta v2 后原子派生数据、证据、截图、Diagram Design 和缺口索引。
+- `claim_ledger.py create|audit`：限制总编辑新增数字、日期、引用或删除限定词。
+- `workflow_policy.py`：统一三模式和六阶段状态机。
+- `render_html.py <md> <out.html>`：渲染单文件 HTML；含 Mermaid 时依赖模板配置的 CDN。
 - `evidence.py`：生成证据/争议矩阵 + 资料缺口。
 - `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。
 - `charts.py`：生成图表到 `images/`。

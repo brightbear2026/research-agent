@@ -1,1 +1,4 @@
-"""深度研究代理的确定性工具集（scaffold / screenshot / render_html / evidence / qc / charts）。"""
+"""深度研究代理的确定性工具集。
+
+包括流程状态、v2 元数据、原子聚合、声明账本、截图、渲染、证据与 QC。
+"""

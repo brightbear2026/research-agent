@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.qc import Report, check_editor_baseline, check_figures, check_readability
+from tools.qc import Report, check_diagrams, check_editor_baseline, check_figures, check_readability
 
 
 class QCTests(unittest.TestCase):
@@ -69,6 +69,26 @@ class QCTests(unittest.TestCase):
             report = Report()
             check_editor_baseline(report, "编辑后结论[1][2]。", baseline)
             self.assertTrue(any("不存在的引用" in x for x in report.errors))
+
+    def test_diagram_requires_exported_png_and_success_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "data").mkdir()
+            (root / "diagrams").mkdir()
+            (root / "images").mkdir()
+            (root / "diagrams/FIG-101.html").write_text(
+                '<svg viewBox="0 0 10 10" role="img" aria-labelledby="t d"><title id="t">图</title><desc id="d">说明</desc></svg>',
+                encoding="utf-8",
+            )
+            (root / "data/diagram_manifest.csv").write_text(
+                "fig_id,source_html,local_path,title,alt_text,visual_type,size,detail,profile,source_ids,source_orgs,source_docs,supports_conclusion\n"
+                "FIG-101,diagrams/FIG-101.html,images/FIG-101.png,图,说明,architecture,doc-wide,balanced,default,ch01-S001,机构,报告,ch01-C001\n",
+                encoding="utf-8",
+            )
+            report = Report()
+            check_diagrams(report, "![说明](images/FIG-101.png)", [], root, strict=True)
+            self.assertTrue(any("尚未导出 PNG" in error for error in report.errors))
+            self.assertTrue(any("未登记到 figures.csv" in error for error in report.errors))
 
 
 if __name__ == "__main__":

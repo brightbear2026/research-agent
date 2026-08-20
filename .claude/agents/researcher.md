@@ -12,9 +12,10 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
 - 区分 **事实 / 人物观点 / 机构观点 / 争议 / 研究判断 / 推测**，用行内标签：
   `【事实】` `【观点·姓名·机构·YYYY-MM-DD】` `【机构观点·机构·日期】` `【争议】` `【研究判断】` `【推测】`
 - 关键数值类结论（规模/收入/用户/份额/融资）须 ≥2 独立来源；冲突时**列出各方 + 口径/时间/机构差异**，给条件性结论，不二选一。
-- 截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造任何图片。
-- **图片内联到章节正文（重要）**：为每张需要的截图指定全局唯一 `fig_id`（如 `FIG-005`，按本章首次出现顺序续编），在**支撑该论断的正文位置**用 Markdown 图片语法 `![简述](images/FIG-005.png)` 单独成段引用（此时 png 尚未生成，由调度方阶段六 `screenshot.py` 按 manifest 的 `local_path=images/FIG-005.png` 产出真实文件；`render_html.py` 会自动把它增强为带来源 caption 的 `<figure>`）。**禁止在草稿末尾或单设「截图」节集中罗列图片。** 同步把该 `fig_id`＋URL＋capture 登记到 `data/screenshot_manifest.csv`。
-- **关系/架构图用 Mermaid，禁手画 ASCII（重要）**：概念关系图、架构图、阵营/竞争格局图、流程图、时间轴等结构化图统一用 ```` ```mermaid ```` 代码块书写（调度方 `render_html.py` 会渲染为拓扑图）；**禁止手画 ASCII 框线图**（`┌─┐│└┘├┤┬▼` 制表符拼接的关系图）——其无法被渲染器图形化，HTML 里仅作裸文本，完全丧失排版价值。如确需纯文本示意，改用普通段落或表格，不要用 ASCII 画框。
+- 原始材料截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造来源截图。Diagram Design 生成图属于“根据公开资料整理”的解释性资产，必须与原始截图严格区分。
+- **图片内联到章节正文（重要）**：为每张需要的截图指定全局唯一 `fig_id`（如 `FIG-005`），在**支撑该论断的正文位置**用 Markdown 图片语法 `![简述](images/FIG-005.png)` 单独成段引用。**禁止在草稿末尾集中罗列图片。** 截图信息只登记到本章 `.meta.json.screenshots`；阶段五由 `aggregate_meta.py` 校验并派生 `data/screenshot_manifest.csv`，不要并发写共享 CSV。
+- **结构图优先 Diagram Design，Mermaid 仅降级（重要）**：概念关系、架构、阵营/竞争格局、流程、时间轴、象限等在“视觉确实优于段落/表格”时，使用已安装的 `diagram-design` skill，并严格采用研究卡预分配的 `fig_id / visual_type / size / detail / profile`。输出静态 HTML 到 `diagrams/FIG-NNN.html`，正文在对应论断旁引用 `![准确替代文本](images/FIG-NNN.png)`，并在 `.meta.json.diagrams` 登记内容来源与支撑结论。当前会话无法发现该 skill 时才写 Mermaid 代码块，并在交付给调度方时说明降级原因。**禁止手画 ASCII 框线图**。
+- Diagram Design 只负责把已核验内容可视化：不得新增事实、节点、关系、数字或因果。每个生成图至少关联一个 `source_id` 和一个 `claim_id`；复杂度超出单图预算时拆分或删除，不得用缩小字号硬塞。
 
 # 来源分层与工具（科技/产业）
 | 等级 | 来源 | 工具 |
@@ -32,34 +33,89 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
 # 输出契约（严格遵守——正文与研究元数据分离）
 1. 每章输出两个同名文件，**不要**直接改 `report/research_report.md`、`data/citations.csv` 等共享文件：
    - `report/_draft_<chNN>_<slug>.md`：只放面向最终读者的章节正文。
-   - `report/_draft_<chNN>_<slug>.meta.json`：放数据点、截图需求、争议、资料缺口和结构化章节结论。
+   - `report/_draft_<chNN>_<slug>.meta.json`：放数据点、截图需求、Diagram Design 生成图、争议、资料缺口和结构化章节结论。
 2. 草稿内**每条有来源的论断**首次出现处，用内联源标签：
    `[[SRC|<类型>|<作者/机构>|<标题>|<出版物/网站>|<发布日期>|<url>|<访问日期>|<等级A/B/C/D>]]`
    同一来源再次引用，**原样复用同一标签文本**（调度方按 url 去重并统一分配 `[n]`）。类型如：论文/网页/财报/白皮书/政策/标准/专利/访谈/数据集。
 3. 草稿用行内标签区分事实/观点/判断，并在争议处简述双方。
 4. **禁止**在 Markdown 正文里出现「数据小表」「建议截图」「供 CSV」「待补充内容」或调度说明。数据点和截图需求只写入 `.meta.json`。
-5. `.meta.json` 至少包含：
+5. `.meta.json` 必须符合 `templates/chapter_meta.schema.json` v2。结论、证据和来源必须通过 ID 显式关联；不得把 `thesis` 复制到证据字段。最小示例：
    ```json
    {
+     "schema_version": 2,
      "chapter_id": "ch05",
      "title": "章节标题",
      "reader_question": "本章替读者回答什么问题",
      "thesis": "本章一句话结论",
      "argument_role": "本章在总论证中的作用",
-     "data_points": [],
+     "sources": [{
+       "source_id": "ch05-S001",
+       "type": "网页",
+       "organization": "来源机构",
+       "title": "原始材料标题",
+       "publication": "官方网站",
+       "publish_date": "2025-01-01",
+       "url": "https://example.com/source",
+       "access_date": "2026-08-09",
+       "tier": "A",
+       "independence_group": "来源机构"
+     }],
+     "evidence_items": [{
+       "evidence_id": "ch05-E001",
+       "summary": "原始材料直接显示的事实，不是章节结论的复写",
+       "source_ids": ["ch05-S001"],
+       "stance": "support",
+       "limitations": "材料适用范围"
+     }],
+     "claims": [{
+       "claim_id": "ch05-C001",
+       "statement": "本章结论",
+       "supporting_evidence_ids": ["ch05-E001"],
+       "opposing_evidence_ids": [],
+       "conditions": "适用条件",
+       "confidence": "中",
+       "decision_implication": "行动含义"
+     }],
+     "data_points": [{
+       "data_id": "ch05-D001",
+       "claim": "指标名称",
+       "value": "42",
+       "unit": "%",
+       "stat_time": "2025",
+       "region": "中国",
+       "definition": "指标口径",
+       "source_ids": ["ch05-S001"],
+       "is_key": false,
+       "notes": ""
+     }],
      "screenshots": [],
+     "diagrams": [{
+       "fig_id": "FIG-005",
+       "title": "核心参与方与信息流",
+       "visual_type": "architecture",
+       "source_html": "diagrams/FIG-005.html",
+       "local_path": "images/FIG-005.png",
+       "size": "doc-wide",
+       "detail": "balanced",
+       "profile": "default",
+       "source_ids": ["ch05-S001"],
+       "supports_claim_ids": ["ch05-C001"],
+       "alt_text": "核心参与方、数据入口与决策输出之间的信息流"
+     }],
      "controversies": [],
      "gaps": [],
      "chapter_conclusion": {
-       "judgment": "",
+       "claim_id": "ch05-C001",
+       "judgment": "本章结论",
        "counter_evidence": "",
-       "conditions": "",
-       "time_range": "",
+       "conditions": "适用条件",
+       "time_range": "2025",
        "confidence": "中",
-       "decision_implication": ""
+       "decision_implication": "行动含义"
      }
    }
    ```
+   数值型 `value` 的 `unit/stat_time/region/definition` 不得留空；不适用时必须明确写「不适用」。关键数值 `is_key=true` 时至少关联两个不同 `independence_group` 的来源。
 6. Markdown 章首用不超过 150 字的「本章结论」直接回答核心问题；章末写「对决策的含义」，不要重复整章内容。
 7. 你的**最终回复**给调度方：1 段本章小结 + 源标签数量 + 两个输出文件路径。**不要**把整篇草稿贴回回复。
 

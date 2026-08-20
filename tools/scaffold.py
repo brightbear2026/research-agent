@@ -16,6 +16,7 @@ from pathlib import Path
 TREE: list[tuple[str, bool]] = [
     ("report", True),
     ("images", True),
+    ("diagrams", True),
     ("data", True),
     ("evidence", True),
     ("sources", True),
@@ -34,8 +35,9 @@ INDEXES: list[tuple[str, list[str]]] = [
     ]),
     ("data/tables.csv", ["table_id", "title", "source", "notes"]),
     ("data/source_data.csv", [
-        "data_name", "value", "unit", "stat_time", "region",
-        "definition", "source", "source_org", "source_date", "tier", "credibility", "notes",
+        "data_id", "chapter_id", "data_name", "value", "unit", "stat_time", "region",
+        "definition", "source_ids", "source_urls", "source_orgs", "source_dates", "tiers",
+        "independence_groups", "is_key", "notes",
     ]),
     ("data/company_comparison.csv", [
         "dimension", "company_a", "company_b", "company_c", "company_d", "notes",
@@ -54,13 +56,20 @@ INDEXES: list[tuple[str, list[str]]] = [
         "title", "source_org", "source_doc", "publish_date",
         "supports_conclusion", "is_primary_source",
     ]),
+    ("data/diagram_manifest.csv", [
+        "fig_id", "source_html", "local_path", "title", "alt_text", "visual_type",
+        "size", "detail", "profile", "source_ids", "source_orgs", "source_docs",
+        "supports_conclusion",
+    ]),
     ("evidence/evidence_matrix.csv", [
-        "conclusion_id", "core_conclusion", "supporting_evidence",
-        "opposing_evidence", "source_tier", "sufficiency", "final_judgment",
+        "conclusion_id", "chapter_id", "core_conclusion", "supporting_evidence_ids",
+        "supporting_evidence", "opposing_evidence_ids", "opposing_evidence", "source_ids",
+        "source_tier", "independent_source_groups", "sufficiency", "conditions", "confidence",
+        "final_judgment",
     ]),
     ("evidence/controversy_matrix.csv", [
-        "controversy_id", "question", "view_a", "supporters_a",
-        "view_b", "supporters_b", "evidence_comparison", "research_judgment",
+        "controversy_id", "chapter_id", "question", "view_a", "evidence_ids_a", "supporters_a",
+        "view_b", "evidence_ids_b", "supporters_b", "evidence_comparison", "research_judgment",
     ]),
 ]
 
@@ -103,6 +112,8 @@ def scaffold(root: Path, force: bool) -> None:
 
     for rel, content in MD_FILES:
         (root / rel).write_text(content, encoding="utf-8")
+
+    (root / "evidence" / "research_gaps.json").write_text("[]\n", encoding="utf-8")
 
     # 报告占位
     (root / "report" / "research_report.md").write_text(
