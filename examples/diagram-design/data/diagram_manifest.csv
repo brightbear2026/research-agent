@@ -1,0 +1,2 @@
+fig_id,source_html,local_path,title,alt_text,visual_type,size,detail,profile,source_ids,source_orgs,source_docs,supports_conclusion
+FIG-101,diagrams/FIG-101.html,images/FIG-101.png,One workflow across three agent hosts,"Claude Code, Codex, and Hermes feed one six-phase research workflow that exports audited reports and diagrams",architecture,doc-wide,balanced,default,REPO-WORKFLOW,research-agent,"CLAUDE.md; config/workflow_modes.yaml; SKILL.md",DEMO-C1

@@ -506,6 +506,77 @@ def check_figures(
     report.ok.append(f"图片检查：正文引用 {len(fig_refs)} 个 / 登记 {len(figures)} 个")
 
 
+def check_diagrams(
+    report: Report,
+    md_text: str,
+    diagrams: list[dict],
+    figures: list[dict],
+    root: Path,
+    strict: bool,
+) -> None:
+    """检查 Diagram Design 静态源、PNG、正文位置和来源追踪。"""
+    if not diagrams:
+        report.ok.append("Diagram Design：无登记图")
+        return
+    try:
+        from tools.diagram_assets import resolve_input_path, validate_diagram_html
+        from tools.screenshot import resolve_image_output
+    except ModuleNotFoundError:
+        from diagram_assets import resolve_input_path, validate_diagram_html
+        from screenshot import resolve_image_output
+
+    body_images = {
+        Path(match.group(1).split("?")[0]).name
+        for match in re.finditer(r"!\[[^\]]*\]\(([^)]+)\)", md_text)
+        if not match.group(1).startswith("http")
+    }
+    figures_by_id = {
+        (row.get("fig_id") or "").strip(): row
+        for row in figures if (row.get("fig_id") or "").strip()
+    }
+    seen: set[str] = set()
+    valid = 0
+    for row in diagrams:
+        fig_id = (row.get("fig_id") or "").strip()
+        if not re.fullmatch(r"FIG-\d{3,}", fig_id):
+            report.errors.append(f"diagram_manifest.csv fig_id 无效：{fig_id!r}")
+            continue
+        if fig_id in seen:
+            report.errors.append(f"diagram_manifest.csv fig_id 重复：{fig_id}")
+            continue
+        seen.add(fig_id)
+        if not (row.get("source_ids") or "").strip():
+            report.errors.append(f"Diagram Design {fig_id} 缺少 source_ids")
+        if not (row.get("supports_conclusion") or "").strip():
+            report.errors.append(f"Diagram Design {fig_id} 缺少 supports_conclusion")
+        try:
+            source = resolve_input_path(root, (row.get("source_html") or "").strip())
+            output, normalized = resolve_image_output(
+                root, (row.get("local_path") or "").strip(), fig_id,
+            )
+        except ValueError as exc:
+            report.errors.append(f"Diagram Design {fig_id} 路径无效：{exc}")
+            continue
+        html_errors = validate_diagram_html(source)
+        if html_errors:
+            report.errors.append(f"Diagram Design {fig_id} 静态源无效：{'；'.join(html_errors)}")
+        figure = figures_by_id.get(fig_id)
+        if figure is None:
+            add_issue(report, f"Diagram Design {fig_id} 未登记 figures.csv", strict)
+        else:
+            if (figure.get("local_path") or "").strip() != normalized:
+                report.errors.append(f"Diagram Design {fig_id} 与 figures.csv 的 local_path 不一致")
+            if "Diagram Design" not in (figure.get("status") or ""):
+                add_issue(report, f"Diagram Design {fig_id} 的 figures.csv 状态不是生成图状态", strict)
+        if not output.exists():
+            add_issue(report, f"Diagram Design {fig_id} 尚未导出 PNG：{normalized}", strict)
+        if Path(normalized).name not in body_images:
+            add_issue(report, f"Diagram Design {fig_id} 未内联到正文对应论断附近", strict)
+        if not html_errors:
+            valid += 1
+    report.ok.append(f"Diagram Design：登记 {len(diagrams)} 张 / 静态源通过 {valid} 张")
+
+
 def wayback_snapshot(url: str, timeout: float = 6.0) -> str | None:
     """查询 Wayback Availability API；有归档返回快照 URL，否则 None。
 
@@ -672,17 +743,24 @@ def check_readability(
         add_issue(report, f"正文残留 {len(internal_headings)} 个生产过程章节", strict)
 
     plain = re.sub(r"(?m)^#{1,6}\s+.*$", "", body)
+    plain = re.sub(r"```[\s\S]*?```", "", plain)
+    plain = re.sub(r"(?m)^\s*\|.*\|.*$", "", plain)
     plain = re.sub(r"<[^>]+>", "", plain)
     plain = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", plain)
     plain = re.sub(r"【[^】]+】", "", plain)
     plain = re.sub(r"\[\d+(?:[-,，]\s*\d+)*\]", "", plain)
+    # Split numbered/bullet list items into separate sentences for readability metrics
+    plain = re.sub(r"\s*;\s*-\s+", "。\n", plain)
+    plain = re.sub(r"\s*-\s+\*\*", "。\n**", plain)
+    plain = re.sub(r"\n\s*-\s+", "\n", plain)
+    plain = re.sub(r"\n\s*\d+\.\s+", "\n", plain)
     body_chars = len(re.sub(r"\s+", "", plain))
 
     paragraphs = [re.sub(r"\s+", " ", p.strip())
                   for p in re.split(r"\n\s*\n", plain)
                   if p.strip() and not p.lstrip().startswith(("#", "- ", ">"))]
     paragraph_lengths = [len(p) for p in paragraphs]
-    sentences = [s.strip() for s in re.split(r"[。！？!?]\s*", "\n".join(paragraphs)) if s.strip()]
+    sentences = [s.strip() for s in re.split(r"[。！？!?；]\s*", "\n".join(paragraphs)) if s.strip()]
     sentence_lengths = [len(s) for s in sentences]
 
     if body_chars < profile.min_body_chars:
@@ -872,6 +950,7 @@ def run(
 
     citations = load_csv(root / "data" / "citations.csv")
     figures = load_csv(root / "data" / "figures.csv")
+    diagrams = load_csv(root / "data" / "diagram_manifest.csv")
 
     check_citations(rep, md_text, citations, root, strict)
     check_source_freshness(rep, citations, strict)
@@ -880,6 +959,7 @@ def run(
     check_prohibited_content(rep, md_text, strict)
     check_evidence_independence(rep, root, depth, strict)
     check_figures(rep, md_text, figures, root, strict)
+    check_diagrams(rep, md_text, diagrams, figures, root, strict)
     if not skip_readability:
         check_readability(rep, md_text, depth, strict)
     else:

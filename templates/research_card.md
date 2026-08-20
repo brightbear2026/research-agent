@@ -21,6 +21,16 @@
 - **需查找的企业方案**：
 - **需查找的券商研报**（机构/分析师/报告类型/覆盖对象/发布日期/预测期/关键假设/反方观点）：
 - **需制作的图表**：
+- **需制作的 Diagram Design 解释图**（仅当视觉优于段落/表格；调度方预分配全局 `fig_id`）：
+  - `fig_id`：
+  - `visual_type`：
+  - `size`（compact / standard / doc-wide / hero）：
+  - `detail`（minimal / balanced / rich）：
+  - `profile`（来自课题根 `.diagram-design`）：
+  - `source_ids`：
+  - `supports_claim_ids`：
+  - `alt_text`：
+  - 插件不可发现时降级 Mermaid 并记录原因，不伪装成 Diagram Design 资产。
 - **需截取的原始材料**（登记到 `data/screenshot_manifest.csv`，由调度方 Phase 6 统一执行 `screenshot.py`）：
   - **对象类型清单**（按需勾选；优先一级来源；每张须支持某条具体结论）：
     - [ ] 标准/框架原文页（OWASP / MITRE ATLAS / NIST AI RMF / ISO 42001 / MAESTRO / TC260…）

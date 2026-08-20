@@ -1,6 +1,6 @@
 # 研究代理项目约定（research-agent）
 
-本仓库是一个面向 **Claude Code 与 Codex/ChatGPT Work** 的双入口深度研究代理：Claude Code 以 `/deep-research <课题>` 触发，Codex/ChatGPT Work 以 `$deep-research-work` 触发；两者共享同一六阶段状态机、schema v2、聚合与 QC 工具。最终在 `projects/<课题slug>/` 落地 Markdown + HTML 报告与证据矩阵——**每个课题一个独立 slug 文件夹，互不覆盖**。领域定位：**科技/产业**。
+本仓库是一个面向 **Claude Code、Codex/ChatGPT Work 与 Hermes/Agent-Skills harness** 的多入口深度研究代理：Claude Code 以 `/deep-research <课题>` 触发，Codex/ChatGPT Work 以 `$deep-research-work` 触发，Hermes/兼容 harness 读取根目录 `SKILL.md`；三者共享同一六阶段状态机、schema v2、聚合与 QC 工具。最终在 `projects/<课题slug>/` 落地 Markdown + HTML 报告与证据矩阵——**每个课题一个独立 slug 文件夹，互不覆盖**。领域定位：**科技/产业**。
 
 本仓库的来源分层和 QC 阈值按科技/产业研究设计，不默认适用于医疗诊断、治疗建议、法律意见、诉讼策略或个人投资建议。若用户把这些高风险主题放入范围，必须明确提示领域边界，并另行采用相应专业标准、最新法规/指南与合格专家复核；不得把本项目的“QC 通过”表述为专业意见。
 
@@ -43,7 +43,7 @@
 - **Markdown 为规范叙事（canonical）**：`report/_assembled_report.md` 是确定性组装稿，经 `report-editor` 只做压缩、去重和重组后生成 `report/research_report.md` 终稿；HTML 再由 `tools/render_html.py` 从终稿 + 旁路索引派生，禁止两版分别手写。
 - 自制图表标题统一标「数据来源：根据公开资料整理/计算」，不得冒充机构原图。
 - **截图/自制图表内联到所支撑的章节正文**：在相关论断处用 Markdown 图片语法 `![简述](images/FIG-NNN.png)` 单独成段展示；**不得在附录或报告末尾集中罗列图片**。`data/figures.csv` 仅作旁路索引（供 caption、`qc.py` 校验），不是展示位置。
-- **结构化关系图统一用 Mermaid**：概念关系图、架构图、阵营/竞争格局图、流程图、时间轴等用 mermaid 代码块（fence 语言标注 `mermaid`），由 `render_html.py` 自动渲染为拓扑图；**禁止手画 ASCII 框线图**（`┌─┐│└┘├┤┬▼` 制表符拼接的关系图）——其无法被渲染器图形化，HTML 里仅作裸文本，丧失排版价值。
+- **结构化关系图优先 Diagram Design，Mermaid 为降级路径**：仅当视觉明显优于段落/表格时生成结构图。宿主可发现 `diagram-design` skill 时，输出可审查的 `diagrams/FIG-NNN.html`，再由 `tools/diagram_assets.py` 校验并导出 `images/FIG-NNN.png`；不可发现时用 Mermaid。生成图只是“根据公开资料整理”的解释性资产，不是证据或机构原始截图，必须在 chapter meta 的 `diagrams` 中关联 `source_ids` 与 `supports_claim_ids`。**禁止手画 ASCII 框线图**。
 
 ## 交付目录契约（由 `tools/scaffold.py` 生成）
 ```
@@ -51,7 +51,8 @@ projects/<课题slug>/
 ├── README.md
 ├── report/{_assembled_report.md, research_report.md, research_report.html}
 ├── images/FIG-###.png
-├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, broker_report_list.csv, source_index.csv, screenshot_manifest.csv, glossary.md, chapter_meta.json}
+├── diagrams/FIG-###.html
+├── data/{citations.csv, figures.csv, tables.csv, source_data.csv, company_comparison.csv, paper_list.csv, broker_report_list.csv, source_index.csv, screenshot_manifest.csv, diagram_manifest.csv, glossary.md, chapter_meta.json}
 ├── evidence/{evidence_matrix.csv, controversy_matrix.csv, research_gaps.md}
 └── sources/{bibliography.md, source_index.md}
 ```
@@ -69,6 +70,7 @@ Skill 接收 `depth=快速|标准|深度`（默认「标准」）：
 - `aggregate_meta.py`：校验 schema v2、证据引用关系与数据限定字段，备份后原子聚合。
 - `claim_ledger.py`：冻结编辑前事实锚点并审计数字、日期、实体、因果、确定性和限制条件漂移。
 - `screenshot.py <manifest.csv>`：真实截图（`full`/`viewport`/`element` 区块/`pdf` 指定页）+ 写 `figures.csv`。
+- `diagram_assets.py <diagram_manifest.csv>`：校验 Diagram Design 静态 HTML，导出 PNG，并合并写 `figures.csv`。
 - `render_html.py <md> <out.html>`：渲染自包含 HTML。
 - `evidence.py`：生成证据/争议矩阵 + 资料缺口。
 - `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。核心检查 `exit 0` 即可交付；死链/链接警告/来源时效/段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json`（再用 `workflow_policy.py record-debt` 记入状态机）异步收尾。死链永不阻断——伪造 URL 无 Wayback 归档会在 debt 清单显眼标红。

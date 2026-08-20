@@ -18,7 +18,9 @@ jobs:
           enable-cache: true
       - name: Install locked dependencies
         run: uv sync --locked
+      - name: Install Playwright Chromium
+        run: uv run playwright install --with-deps chromium
       - name: Check package/browser mapping
-        run: uv run python tools/check_env.py --skip-browser
+        run: uv run python tools/check_env.py
       - name: Run test suite
         run: uv run python -m unittest discover -s tests -v

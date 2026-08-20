@@ -19,6 +19,7 @@ DEFAULT_PROJECTS_ROOT = REPOSITORY_ROOT / "projects"
 TREE: list[tuple[str, bool]] = [
     ("report", True),
     ("images", True),
+    ("diagrams", True),
     ("data", True),
     ("evidence", True),
     ("sources", True),
@@ -66,6 +67,11 @@ INDEXES: list[tuple[str, list[str]]] = [
         "title", "source_org", "source_doc", "publish_date",
         "supports_conclusion", "is_primary_source",
         "alternative_url",
+    ]),
+    ("data/diagram_manifest.csv", [
+        "fig_id", "source_html", "local_path", "title", "alt_text",
+        "visual_type", "size", "detail", "profile", "source_ids",
+        "source_orgs", "source_docs", "supports_conclusion",
     ]),
     ("evidence/evidence_matrix.csv", [
         "conclusion_id", "core_conclusion", "supporting_evidence",

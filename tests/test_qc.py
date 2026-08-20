@@ -12,6 +12,7 @@ from tools.qc import (
     _categorize_warning,
     _parse_year_month,
     check_editor_baseline,
+    check_diagrams,
     check_evidence_independence,
     check_fact_citation_locality,
     check_figures,
@@ -26,6 +27,34 @@ from tools.qc import (
 
 
 class QCTests(unittest.TestCase):
+    def test_diagram_requires_static_source_export_index_and_body_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "diagrams").mkdir()
+            (root / "images").mkdir()
+            source = root / "diagrams/FIG-101.html"
+            source.write_text(
+                '<svg viewBox="0 0 10 10" role="img" aria-labelledby="t d">'
+                '<title id="t">图</title><desc id="d">说明</desc></svg>',
+                encoding="utf-8",
+            )
+            image = root / "images/FIG-101.png"
+            image.write_bytes(b"png")
+            diagrams = [{
+                "fig_id": "FIG-101", "source_html": "diagrams/FIG-101.html",
+                "local_path": "images/FIG-101.png", "source_ids": "S1",
+                "supports_conclusion": "C1",
+            }]
+            figures = [{
+                "fig_id": "FIG-101", "local_path": "images/FIG-101.png",
+                "status": "已生成(Diagram Design)",
+            }]
+            report = Report()
+            check_diagrams(
+                report, "![信息流](images/FIG-101.png)", diagrams, figures, root, strict=True,
+            )
+            self.assertFalse(report.errors)
+
     def test_internal_markers_fail_only_in_strict_mode(self) -> None:
         md = "# 第一章\n\n## 本章结论\n\n清晰结论。\n\n## 建议截图项\n\nFIG-001\n"
 
