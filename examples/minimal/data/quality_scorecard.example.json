@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "evaluation_kind": "metadata_coverage_not_factual_accuracy",
+  "limitations": [
+    "仅校验登记结构与覆盖，不自动验证摘录真伪、引用蕴含或正文是否完整回答问题。",
+    "研究问题和检索日志由研究者登记，须结合原始记录复核；缺少记录的比例为 null。",
+    "不生成综合质量分，不替代人工评审或 DeepResearch Bench 等语义评估。"
+  ],
+  "metrics": {
+    "question_plan_coverage": {
+      "covered": 1,
+      "total": 1,
+      "ratio": 1.0
+    },
+    "claim_support_coverage": {
+      "covered": 1,
+      "total": 1,
+      "ratio": 1.0
+    },
+    "evidence_provenance_coverage": {
+      "covered": 2,
+      "total": 2,
+      "ratio": 1.0
+    },
+    "question_answer_coverage": {
+      "covered": 1,
+      "total": 1,
+      "ratio": 1.0
+    },
+    "counter_search_coverage": {
+      "covered": 1,
+      "total": 1,
+      "ratio": 1.0
+    }
+  },
+  "chapters": [
+    {
+      "chapter_id": "ch01",
+      "metrics": {
+        "question_plan_coverage": {
+          "covered": 1,
+          "total": 1,
+          "ratio": 1.0
+        },
+        "claim_support_coverage": {
+          "covered": 1,
+          "total": 1,
+          "ratio": 1.0
+        },
+        "evidence_provenance_coverage": {
+          "covered": 2,
+          "total": 2,
+          "ratio": 1.0
+        },
+        "question_answer_coverage": {
+          "covered": 1,
+          "total": 1,
+          "ratio": 1.0
+        },
+        "counter_search_coverage": {
+          "covered": 1,
+          "total": 1,
+          "ratio": 1.0
+        }
+      }
+    }
+  ],
+  "findings": [],
+  "sample_notice": "仅为合成结构示例，不是真实市场研究或事实正确率评估。"
+}

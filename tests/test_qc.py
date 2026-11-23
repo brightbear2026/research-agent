@@ -18,6 +18,7 @@ from tools.qc import (
     check_figures,
     check_links,
     check_numeric_claim_sourcing,
+    check_paper_verification,
     check_prohibited_content,
     check_readability,
     check_source_freshness,
@@ -319,6 +320,124 @@ class QcDebtManifestTests(unittest.TestCase):
             self.assertEqual(manifest["core_passed"], code == 0)
             self.assertIn("by_category", manifest["summary"])
             self.assertIsInstance(manifest["debt"], list)
+
+
+class PaperVerificationTests(unittest.TestCase):
+    def _write_paper_list(self, root: Path, count: int = 2) -> None:
+        root.joinpath("data").mkdir(parents=True, exist_ok=True)
+        lines = ["title,authors,doi"]
+        lines += [f"Paper {i},Author {i}," for i in range(1, count + 1)]
+        root.joinpath("data", "paper_list.csv").write_text("\n".join(lines), encoding="utf-8")
+
+    def test_missing_verification_becomes_advisory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_paper_list(root)
+            report = Report()
+            check_paper_verification(report, root)
+            self.assertTrue(any("文献验证缺失" in w for w in report.warnings))
+            self.assertFalse(report.errors)
+
+    def test_not_found_rows_become_advisory_never_blocking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_paper_list(root)
+            manifest = {
+                "generated_at": datetime.now().isoformat(),
+                "rows": [
+                    {"title": "Ghost Paper", "status": "not_found"},
+                    {"title": "Odd Paper", "status": "mismatch"},
+                    {"title": "Fine Paper", "status": "verified"},
+                ],
+            }
+            root.joinpath("data", "paper_verification.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+            )
+            report = Report()
+            check_paper_verification(report, root)
+            joined = "\n".join(report.warnings)
+            self.assertIn("文献存在性", joined)
+            self.assertIn("无匹配", joined)
+            self.assertIn("人工核对", joined)
+            self.assertFalse(report.errors)
+
+    def test_all_verified_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._write_paper_list(root)
+            manifest = {
+                "generated_at": datetime.now().isoformat(),
+                "rows": [{"title": "Paper 1", "status": "verified"},
+                         {"title": "Paper 2", "status": "verified"}],
+            }
+            root.joinpath("data", "paper_verification.json").write_text(
+                json.dumps(manifest, ensure_ascii=False), encoding="utf-8"
+            )
+            report = Report()
+            check_paper_verification(report, root)
+            self.assertFalse(report.warnings)
+            self.assertTrue(any("验证通过" in o for o in report.ok))
+
+    def test_empty_paper_list_is_silent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.joinpath("data").mkdir(parents=True)
+            root.joinpath("data", "paper_list.csv").write_text("title,doi\n", encoding="utf-8")
+            report = Report()
+            check_paper_verification(report, root)
+            self.assertFalse(report.warnings)
+            self.assertFalse(report.errors)
+
+    def test_categorize_paper_verification_warning(self) -> None:
+        self.assertEqual(_categorize_warning("文献存在性：1 篇无匹配"), "paper_verification")
+        self.assertEqual(_categorize_warning("文献验证缺失：paper_list 有 3 行"), "paper_verification")
+
+
+class P0ClaimSupportTests(unittest.TestCase):
+    def _meta(self, tier: str) -> list[dict]:
+        return [{
+            "chapter_id": "ch01",
+            "sources": [{"source_id": "S1", "url": "https://example.com/a",
+                         "tier": tier, "independence_group": "甲"},
+                        {"source_id": "S2", "url": "https://example.com/b",
+                         "tier": tier, "independence_group": "乙"}],
+            "claims": [
+                {"claim_id": "C1", "text": "核心判断（无数值量纲）",
+                 "priority": "P0", "source_ids": ["S1"], "supporting_evidence_ids": ["E1"]},
+            ],
+            "data_points": [{"evidence_id": "E1", "value": "判断", "source_ids": ["S1"]}],
+            "chapter_conclusion": {"claim_id": "C1",
+                                   "supporting_evidence_ids": ["E1", "E2"]},
+        }]
+
+    def test_p0_without_ab_tier_fails_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.joinpath("data").mkdir()
+            # E2 缺失也无妨：本检查聚焦 P0 声明的 A/B 背书
+            meta = self._meta("C")
+            meta[0]["data_points"].append({"evidence_id": "E2", "value": "判断", "source_ids": ["S2"]})
+            root.joinpath("data", "chapter_meta.json").write_text(
+                json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+            )
+            report = Report()
+            check_evidence_independence(report, root, "标准", strict=True)
+            joined = "\n".join(report.errors)
+            self.assertIn("P0 核心声明", joined)
+
+    def test_p0_with_ab_tier_passes_p0_rule(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            root.joinpath("data").mkdir()
+            meta = self._meta("B")
+            meta[0]["data_points"].append({"evidence_id": "E2", "value": "判断", "source_ids": ["S2"]})
+            root.joinpath("data", "chapter_meta.json").write_text(
+                json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+            )
+            report = Report()
+            check_evidence_independence(report, root, "标准", strict=True)
+            joined = "\n".join(report.errors)
+            self.assertNotIn("P0 核心声明", joined)
 
 
 if __name__ == "__main__":

@@ -86,3 +86,42 @@ def source_independence_key(source: dict) -> str:
         return f"org:{organization}"
     host = registrable_host(str(source.get("url") or "").strip())
     return f"domain:{host}" if host else "unknown"
+
+
+def independent_source_groups(sources: list[dict]) -> list[list[dict]]:
+    """按生产者、同文 URL 与已声明原始出处取传递闭包，未知来源不计数。
+
+    分组名不能让同一篇材料变成独立来源。origin_url 用于已核实的转载链；
+    这里只识别登记的关系，不声称自动发现所有转载或验证来源内容。
+    """
+    parents = list(range(len(sources)))
+    identities: dict[str, int] = {}
+    known: set[int] = set()
+
+    def root(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    for index, source in enumerate(sources):
+        keys = set()
+        producer = source_independence_key(source)
+        if producer != "unknown":
+            keys.add(producer)
+        for field in ("url", "origin_url"):
+            url = str(source.get(field) or "").strip()
+            if registrable_host(url):
+                keys.add("url:" + canonical_url_key(url))
+        if keys:
+            known.add(index)
+        for key in keys:
+            if key in identities:
+                parents[root(index)] = root(identities[key])
+            else:
+                identities[key] = index
+
+    groups: dict[int, list[dict]] = {}
+    for index in sorted(known):
+        groups.setdefault(root(index), []).append(sources[index])
+    return list(groups.values())

@@ -28,7 +28,13 @@
 - 不绕过登录、验证码、付费墙或授权控制，不传播未授权全文。完整规则见 `references/source_rubric.md`。
 
 ## 交叉验证
+研究过程的具体记录与补研规则见 `references/research_quality.md`；新研究在分章前读取并执行。每章登记核心问题、检索结果及证据原文位置，终检生成 `data/quality_scorecard.json`。该文件衡量记录覆盖，不能当作事实正确率。
+
 一级数值类结论（市场规模/收入/用户/份额/融资/排名）须 **≥2 独立来源**。来源冲突时：列出各数据 + 口径 + 时间 + 机构，进 `evidence/controversy_matrix.csv`，给**条件性结论**，不得简单二选一。正文【事实】段中的数值声明同样适用此规则——单一 C/D 级来源支撑的数值会被 `qc.py` 标记为 advisory（写入 `data/qc_debt.json`），建议补独立第二来源或改标【推测】。
+
+**文献存在性验证**：交付前对 `data/paper_list.csv` 运行 `tools/paper_enrich.py`（有 DOI/arXiv ID 走确定性端点，否则按标题查 Crossref，可选 Semantic Scholar）。`not_found ≠ 编造实锤`——未被学术索引收录的中文文献、白皮书、厂商报告都会落入 not_found；验证结果只作 advisory 进 `qc_debt.json`，由人工核对收尾，永不阻断交付。**检索任务类型化**：阶段三把各章检索编译为 `explore / refute / pin` 三类任务登记进章节元数据 `search_tasks`，反方检索从自觉变成有覆盖账本的任务；核心结论可自标 `priority: P0`，P0 声明必须有 A/B 级来源背书（终检强制）。引用覆盖率是过程指标，**不设硬性引用配额**，不得为凑数引用低质来源。
+
+独立性只统计 `supporting_evidence_ids` 实际关联的来源；声明的 `source_ids` 清单或反方证据不补足支持数。同一规范化 URL 即使登记了不同机构/分组也只计一次；已确认转载的来源填写 `origin_url`，与原文及相同生产者合并。无法识别生产者、域名或原文的来源不贡献独立计数。
 
 ## 行内标签（Markdown 与 HTML 共用，渲染器识别）
 - `【事实】` 客观事实（须有来源）
@@ -73,12 +79,14 @@ Skill 接收 `depth=快速|标准|深度`（默认「标准」）：
 - `diagram_assets.py <diagram_manifest.csv>`：校验 Diagram Design 静态 HTML，导出 PNG，并合并写 `figures.csv`。
 - `render_html.py <md> <out.html>`：渲染自包含 HTML。
 - `evidence.py`：生成证据/争议矩阵 + 资料缺口。
-- `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。核心检查 `exit 0` 即可交付；死链/链接警告/来源时效/段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json`（再用 `workflow_policy.py record-debt` 记入状态机）异步收尾。死链永不阻断——伪造 URL 无 Wayback 归档会在 debt 清单显眼标红。
+- `qc.py --root <项目名> [--strict]`：链接、引用、截图、格式与可读性质检；最终交付必须使用 `--strict`。核心检查 `exit 0` 即可交付；死链/链接警告/来源时效/段落级数值来源/文献存在性等 advisory 项不阻断，写入 `data/qc_debt.json`（再用 `workflow_policy.py record-debt` 记入状态机）异步收尾。死链永不阻断——失效链接记录在 debt 清单中；有无归档不能判定来源真伪或引用是否有效。
+- `paper_enrich.py --root <项目名>`：验证 `paper_list.csv` 文献存在性并回填规范元数据（Crossref/arXiv/S2），产出 `data/paper_list_enriched.csv` 与 `data/paper_verification.json`，供 `qc.py` 生成 advisory。
 - `check_env.py`：从已安装 Playwright 包读取所需 Chromium build，并检查浏览器是否存在。
 - `charts.py`：生成图表到 `images/`。
 
 ## 默认与禁忌
 - 报告语言：**中文**叙事；英文来源保留**简短原文**引用（不超过合理篇幅，避免版权风险）。
+- **模型分级**（宿主支持子代理选模型时）：阶段二广泛调研等检索密集型子代理可用轻量模型，阶段四分章深研与总编辑保持主力模型——检索候选发现对推理深度要求低，写作与证据研判不掉档。
 - 所有「目前/当前/最新」等须标**明确日期**；标注**数据截止日期**与**访问日期**。
 - 禁用无证据套话：「众所周知 / 毫无疑问 / 必将 / 彻底改变 / 颠覆一切 / 市场前景无限 / 具有重大意义」。
 - **新课题独立调研，不前置参考 `projects/` 下其他课题的历史报告**：每次 `/deep-research` 从课题本身的研究问题/关键词出发；既有课题报告仅作交付归档，不作为新课题的背景输入（除非用户明确要求引用）。

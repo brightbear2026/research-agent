@@ -182,7 +182,11 @@ def run(
     ok = skipped = 0
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except Exception:
+                # headless shell 未安装时兜底：改用完整 Chromium 的新 headless 模式（仍为真实渲染）
+                browser = playwright.chromium.launch(headless=True, channel="chromium")
             context = browser.new_context(device_scale_factor=scale, locale="zh-CN")
             page = context.new_page()
             for row, source, output in prepared:

@@ -58,6 +58,8 @@ def initial_state(mode: str, config: dict[str, Any]) -> dict[str, Any]:
         "external_failures": [],
         "research_gaps": [],
         "chapter_progress": {},
+        "phase_started_at": now_iso(),
+        "telemetry": {"phase_durations": {}},
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
@@ -106,6 +108,12 @@ def update_chapter_status(
                 "请升级检索策略、放宽研究维度，或转资料缺口（record-failure）后继续"
             )
         item["attempts"] = int(item.get("attempts", 0)) + 1
+        # 遥测：首次进入 in_progress 记起点；重派不重置（墙钟口径，含等待时间）
+        item.setdefault("started_at", now_iso())
+    if status == "in_progress":
+        item.setdefault("started_at", now_iso())
+    if status == "completed":
+        item["completed_at"] = now_iso()
     item["status"] = status
     item["updated_at"] = now_iso()
     updated["updated_at"] = now_iso()
@@ -149,6 +157,14 @@ def advance_state(
         updated["confirmation_count"] += 1
     if phase not in updated["completed_phases"]:
         updated["completed_phases"].append(phase)
+    # 遥测：记录完成阶段的墙钟耗时（含确认等待）；旧状态缺起点时跳过
+    started = updated.get("phase_started_at")
+    if started:
+        try:
+            duration = (datetime.now(timezone.utc) - datetime.fromisoformat(started)).total_seconds()
+            updated.setdefault("telemetry", {}).setdefault("phase_durations", {})[phase] = round(duration, 1)
+        except ValueError:
+            pass
     updated["phase_status"] = "completed"
     updated["updated_at"] = now_iso()
     if phase == policy["stop_after"]:
@@ -161,6 +177,7 @@ def advance_state(
         return updated, "stop"
     updated["phase"] = phases[index + 1]
     updated["phase_status"] = "in_progress"
+    updated["phase_started_at"] = now_iso()
     return updated, "advanced"
 
 
@@ -203,6 +220,48 @@ def record_external_failure(
 
 def state_path(root: Path) -> Path:
     return root.resolve() / STATE_REL
+
+
+def write_time_breakdown(root: Path, state: dict[str, Any]) -> None:
+    """把阶段/章节耗时写为 data/time_breakdown.json（advisory 遥测，best-effort）。
+
+    墙钟口径（含确认等待与中断挂起），供长任务的时长分布分析；写失败不影响状态机。
+    """
+    try:
+        durations = (state.get("telemetry", {}) or {}).get("phase_durations", {}) or {}
+        phases = [{"phase": name, "seconds": seconds} for name, seconds in durations.items()]
+        chapters = []
+        for chapter_id, item in (state.get("chapter_progress", {}) or {}).items():
+            if not isinstance(item, dict):
+                continue
+            started = item.get("started_at")
+            if not started:
+                continue
+            end = item.get("completed_at") or now_iso()
+            try:
+                seconds = (datetime.fromisoformat(end) - datetime.fromisoformat(started)).total_seconds()
+            except ValueError:
+                continue
+            chapters.append({
+                "chapter_id": chapter_id,
+                "status": item.get("status"),
+                "attempts": item.get("attempts", 0),
+                "seconds": round(seconds, 1),
+                "completed": bool(item.get("completed_at")),
+            })
+        manifest = {
+            "generated_at": now_iso(),
+            "mode": state.get("mode"),
+            "workflow_status": state.get("workflow_status"),
+            "phases": phases,
+            "chapters": chapters,
+            "note": "墙钟时长含确认等待与中断挂起；仅作遥测，不构成质量评价",
+        }
+        out = root / "data" / "time_breakdown.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def load_state(root: Path) -> dict[str, Any]:
@@ -286,6 +345,7 @@ def main() -> int:
                 return 2
             state = initial_state(args.mode, config)
             save_state(root, state)
+            write_time_breakdown(root, state)
             _print_state(state, "initialized")
             return 0
         state = load_state(root)
@@ -336,6 +396,7 @@ def main() -> int:
             )
         if updated is not state:
             save_state(root, updated)
+            write_time_breakdown(root, updated)
         _print_state(updated, action)
         if action == "needs_confirmation":
             return 3

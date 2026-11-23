@@ -1,0 +1,27 @@
+[
+  {
+    "case": "duplicate_url",
+    "before": "passed",
+    "after": "blocked"
+  },
+  {
+    "case": "bibliography_only",
+    "before": "passed",
+    "after": "blocked"
+  },
+  {
+    "case": "opposing_only",
+    "before": "passed",
+    "after": "blocked"
+  },
+  {
+    "case": "valid_independent",
+    "before": "passed",
+    "after": "passed"
+  },
+  {
+    "case": "same_evidence_both_sides",
+    "before": "passed",
+    "after": "passed_with_review_warning"
+  }
+]

@@ -34,7 +34,7 @@ FIGURES_COLS = [
     "failure_category", "failure_reason", "alternative_url",
 ]
 
-NAV_TIMEOUT_MS = 30000
+NAV_TIMEOUT_MS = 60000
 MAX_WAIT_MS = 15000
 MAX_PDF_BYTES = 50 * 1024 * 1024
 MAX_PDF_PAGES = 1000
@@ -384,8 +384,10 @@ def capture_pdf(
 ) -> tuple[bool, str]:
     """流式下载 PDF，在所有成功/失败路径清理临时文件。"""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    # 临时文件统一放系统临时目录：部分挂载盘允许创建但不允许 unlink，
+    # 会让 finally 清理步骤直接崩溃。
     with tempfile.NamedTemporaryFile(
-        prefix="pdf-download-", suffix=".pdf", dir=out_path.parent, delete=False
+        prefix="pdf-download-", suffix=".pdf", delete=False
     ) as temp:
         temp_name = temp.name
     try:
@@ -423,7 +425,11 @@ def run(
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            try:
+                browser = p.chromium.launch(headless=True)
+            except Exception:
+                # headless shell 未安装时兜底：改用完整 Chromium 的新 headless 模式（仍为真实 Playwright 捕获）
+                browser = p.chromium.launch(headless=True, channel="chromium")
             context = browser.new_context(viewport=VIEWPORT, user_agent=UA, locale="zh-CN")
             page = context.new_page()
 
