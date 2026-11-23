@@ -46,7 +46,14 @@
     },
     "controversies": {"type": "array", "items": {"type": "object"}},
     "gaps": {"type": "array"},
-    "chapter_conclusion": {"$ref": "#/$defs/chapterConclusion"}
+    "chapter_conclusion": {"$ref": "#/$defs/chapterConclusion"},
+    "research_questions": {"type": "array", "items": {"$ref": "#/$defs/researchQuestion"}},
+    "search_log": {"type": "array", "items": {"$ref": "#/$defs/searchEntry"}},
+    "search_tasks": {
+      "type": "array",
+      "description": "阶段三编译的类型化检索任务；status 流转 planned→done/partial/open",
+      "items": {"$ref": "#/$defs/searchTask"}
+    }
   },
   "$defs": {
     "nullableString": {"type": ["string", "null"]},
@@ -58,6 +65,7 @@
         "source_id": {"type": "string", "pattern": "^[A-Za-z0-9._:-]+$"},
         "title": {"type": "string", "minLength": 1},
         "url": {"type": ["string", "null"], "format": "uri"},
+        "origin_url": {"type": ["string", "null"], "format": "uri", "description": "已核实的原始出处 URL；转载与原文合并计算独立性"},
         "organization": {"$ref": "#/$defs/nullableString"},
         "publish_date": {"$ref": "#/$defs/nullableString"},
         "tier": {"enum": ["A", "B", "C", "D", null]},
@@ -92,7 +100,11 @@
         "supporting_evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "opposing_evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
         "confidence": {"$ref": "#/$defs/confidence"},
-        "limitations": {"type": "array", "items": {"type": "string"}}
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "priority": {
+          "enum": ["P0", "P1", null],
+          "description": "可选优先级；标 P0 = 该结论须有 A/B 级来源背书（qc 强校验）"
+        }
       },
       "additionalProperties": true
     },
@@ -113,6 +125,7 @@
         "region": {"$ref": "#/$defs/nullableString"},
         "population_or_scope": {"$ref": "#/$defs/nullableString"},
         "definition": {"$ref": "#/$defs/nullableString"},
+        "provenance": {"type": "array", "items": {"$ref": "#/$defs/provenance"}},
         "confidence": {"$ref": "#/$defs/confidence"},
         "limitations": {"type": "array", "items": {"type": "string"}}
       },
@@ -134,9 +147,60 @@
         "time_range": {"type": "string"},
         "confidence": {"$ref": "#/$defs/confidence"},
         "limitations": {"type": "array", "items": {"type": "string"}},
+        "priority": {"enum": ["P0", "P1", null]},
         "decision_implication": {"type": "string"}
       },
       "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source_id", "locator", "excerpt", "access_date"],
+      "properties": {
+        "source_id": {"type": "string", "minLength": 1},
+        "locator": {"type": "string", "minLength": 1},
+        "excerpt": {"type": "string", "minLength": 1},
+        "access_date": {"type": "string", "format": "date"}
+      }
+    },
+    "researchQuestion": {
+      "type": "object",
+      "required": ["question_id", "question", "status", "evidence_ids"],
+      "properties": {
+        "question_id": {"type": "string", "minLength": 1},
+        "question": {"type": "string", "minLength": 1},
+        "status": {"enum": ["answered", "partial", "unanswered"]},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "gap_reason": {"type": "string"}
+      }
+    },
+    "searchEntry": {
+      "type": "object",
+      "required": ["question_id", "query", "intent", "outcome", "source_ids", "reason"],
+      "properties": {
+        "question_id": {"type": "string", "minLength": 1},
+        "query": {"type": "string", "minLength": 1},
+        "intent": {"enum": ["support", "counter", "background"]},
+        "outcome": {"enum": ["new_evidence", "no_new_evidence", "blocked"]},
+        "source_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "searchTask": {
+      "type": "object",
+      "required": ["task_id", "type", "focus", "status"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "type": {
+          "enum": ["explore", "refute", "pin"],
+          "description": "explore=章节探索；refute=反方/局限检索；pin=必引原文定向锁定"
+        },
+        "focus": {"type": "string", "minLength": 1},
+        "status": {"enum": ["planned", "done", "partial", "open"]},
+        "result": {"type": "string", "description": "status=done 时必填：一句话记录结果"},
+        "evidence_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "source_ids": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "note": {"type": "string"}
+      }
     },
     "diagram": {
       "type": "object",

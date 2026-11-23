@@ -17,9 +17,11 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from tools.source_identity import canonical_url_key, source_independence_key
+    from tools.source_identity import canonical_url_key, independent_source_groups
+    from tools.research_quality import validate_quality_metadata
 except ModuleNotFoundError:
-    from source_identity import canonical_url_key, source_independence_key
+    from source_identity import canonical_url_key, independent_source_groups
+    from research_quality import validate_quality_metadata
 
 
 SD_HEADER = [
@@ -56,7 +58,7 @@ OUTPUTS = (
     ("evidence/evidence_matrix.csv", EV_HEADER),
     ("evidence/controversy_matrix.csv", CT_HEADER),
 )
-CONFIDENCES = {"高", "中高", "中", "中低", "低"}
+CONFIDENCES = ("高", "中高", "中", "中低", "低")
 NUMERIC_RE = re.compile(r"(?:^|[^A-Za-z])[-+]?\d+(?:[.,]\d+)?")
 
 
@@ -97,6 +99,8 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
     if not isinstance(document, list):
         result.error("$", "合并元数据顶层必须是章节对象数组")
         return [], result
+    if not document:
+        result.error("$", "章节数组不得为空")
     chapters = [item for item in document if isinstance(item, dict)]
     if len(chapters) != len(document):
         result.error("$", "数组中存在非对象章节")
@@ -149,6 +153,10 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
             result.error(where, "evidence_id 缺失或重复")
         if len(claim_ids) != len(claims):
             result.error(where, "claim_id 缺失或重复")
+        for items, key in ((sources, "source_id"), (evidence, "evidence_id"), (claims, "claim_id")):
+            for item in items:
+                if isinstance(item, dict) and (not isinstance(item.get(key), str) or not item[key].strip()):
+                    result.error(where, f"{key} 必须为非空字符串")
 
         for i, raw in enumerate(screenshots):
             if not isinstance(raw, dict):
@@ -208,8 +216,11 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
                     result.error(source_where, f"缺少字段 {key}")
             if not _string(raw.get("title")):
                 result.error(source_where, "title 不得为空")
-            if raw.get("tier") not in {"A", "B", "C", "D", None}:
+            if raw.get("tier") not in ("A", "B", "C", "D", None):
                 result.error(source_where, "tier 必须为 A/B/C/D/null")
+            for key in ("url", "origin_url", "organization", "independence_group"):
+                if raw.get(key) is not None and not isinstance(raw[key], str):
+                    result.error(source_where, f"{key} 必须为字符串或 null")
             if _is_broker_report(raw):
                 for key in ("organization", "publish_date", "authors", "report_type"):
                     if not raw.get(key):
@@ -294,6 +305,28 @@ def validate_chapters(document: Any) -> tuple[list[dict[str, Any]], ValidationRe
                     result.error(cc_where, f"{key} 引用不存在的 evidence_id：{ref}")
         if _string(conclusion.get("judgment")) in support:
             result.error(cc_where, "结论文本不能作为 evidence_id")
+
+        for label, items, fields in (
+            ("sources", sources, ()),
+            ("data_points", evidence, ("source_ids",)),
+            ("claims", claims, ("source_ids", "supporting_evidence_ids", "opposing_evidence_ids")),
+            ("chapter_conclusion", [conclusion], ("supporting_evidence_ids", "opposing_evidence_ids")),
+        ):
+            for i, item in enumerate(items):
+                if not isinstance(item, dict):
+                    continue
+                for key in fields:
+                    value = item.get(key)
+                    if (not isinstance(value, list)
+                            or any(not isinstance(ref, str) or not ref.strip() for ref in value)
+                            or len(set(_ids(value))) != len(value)):
+                        result.error(f"{where}.{label}[{i}]", f"{key} 必须为不重复的非空字符串数组")
+                if set(_ids(item.get("supporting_evidence_ids"))) & set(_ids(item.get("opposing_evidence_ids"))):
+                    result.warn(f"{where}.{label}[{i}]", "同一证据同时标为支撑和反对；请复核它对条件性结论的不同作用，必要时拆分证据片段，不自动删除反证")
+        # 基础结构错误时不继续解引用可选扩展，以免无效 JSON 导致异常。
+        if not result.errors:
+            for error in validate_quality_metadata(chapter):
+                result.error(where, error)
     return chapters, result
 
 
@@ -441,8 +474,8 @@ def emit_diagrams(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 
 def _sufficiency(source_records: list[dict[str, Any]], opposing_count: int, limitations: list[str]) -> str:
-    independent = {source_independence_key(source) for source in source_records}
-    strong = sum(1 for source in source_records if source.get("tier") in {"A", "B"})
+    independent = independent_source_groups(source_records)
+    strong = sum(any(source.get("tier") in {"A", "B"} for source in group) for group in independent)
     if not independent or strong == 0:
         return "不足"
     if len(independent) < 2:
@@ -471,8 +504,8 @@ def emit_evidence(chapters: list[dict[str, Any]]) -> list[dict[str, str]]:
         source_ids = list(dict.fromkeys(sid for item in support for sid in _ids(item.get("source_ids"))))
         source_records = [source_map[sid] for sid in source_ids]
         tiers = Counter(_string(item.get("tier")) for item in source_records if _string(item.get("tier")))
-        independent = {source_independence_key(source) for source in source_records}
-        strong_count = sum(1 for source in source_records if source.get("tier") in {"A", "B"})
+        independent = independent_source_groups(source_records)
+        strong_count = sum(any(source.get("tier") in {"A", "B"} for source in group) for group in independent)
         limitations = _ids(conclusion.get("limitations"))
         judgment = _string(conclusion.get("judgment"))
         conditions = _string(conclusion.get("conditions"))

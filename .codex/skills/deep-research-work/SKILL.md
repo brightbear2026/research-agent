@@ -7,6 +7,8 @@ description: Execute evidence-backed six-phase research in this repository and d
 
 Use the repository's deterministic workflow. Do not reproduce the workflow from memory or create a parallel policy.
 
+研究质量协议：分章前读取 `references/research_quality.md`，将研究卡问题、实际检索结果及原文位置写入章节元数据。最终 QC 自动生成 `data/quality_scorecard.json`；按核心缺口补研并遵守既有预算，不把记录覆盖率当成事实正确率。
+
 ## Initialize
 
 1. Read `CLAUDE.md` for research integrity and deliverable rules.
@@ -40,6 +42,7 @@ Make every chapter `.meta.json` conform to `templates/chapter_meta.schema.json` 
 - For numeric evidence, missing unit, time, and region/scope is blocking.
 - Record supporting and opposing evidence explicitly.
 - Give standard/deep chapter conclusions at least two independent sources. Numeric claims always require two independent sources.
+- Register the outline's typed search tasks (`explore`/`refute`/`pin`, compiled in phase three) in `.meta.json.search_tasks` and backfill status: `pin` completions must link `source_ids`; finding no counter-evidence is a valid refute result when the queries are recorded. Core claims may declare `priority: "P0"` — a P0 claim commits to A/B-tier source backing and is enforced at final QC. No hard citation quota: coverage is a process metric.
 - Use `diagrams` only when a structured visual materially improves comprehension. Each item must use a globally reserved `fig_id`, write `diagrams/FIG-NNN.html`, reference `images/FIG-NNN.png` near the supported claim, and link at least one `source_id` plus one `supports_claim_id`. Generated diagrams explain verified evidence; they are not source evidence or original screenshots.
 
 Run `tools/aggregate_meta.py --dry-run` before `--force`. The force operation backs up existing CSV files before replacement. Then run `tools/diagram_assets.py <project>/data/diagram_manifest.csv --root <project> --validate-only` before editing/delivery.
@@ -56,4 +59,4 @@ Use `tools/screenshot.py` with a finite deadline. Keep outputs under `images/`. 
 
 After source screenshots, run `tools/diagram_assets.py <project>/data/diagram_manifest.csv --root <project>` to export audited PNGs and merge them into `figures.csv`. If no diagrams were planned, the empty manifest is a safe no-op. Preserve source HTML and label generated figures as compiled from public sources.
 
-Generate HTML and evidence outputs, then run strict QC with both the assembled baseline and claim ledger. Strict QC also blocks uncited fact paragraphs, banned promotional phrases, hand-drawn box diagrams, overlong English quotations, stub-length reports, and insufficient independent support. Delivery is complete only when required artifacts exist, strict QC passes, and the state machine reports `workflow_status=completed`.
+Generate HTML and evidence outputs. For topics with a populated `data/paper_list.csv`, run `tools/paper_enrich.py --root <project>` to verify paper existence via Crossref/arXiv (optional Semantic Scholar with `S2_API_KEY`); `not_found` is a suspect flag for human review, never proof of fabrication and never delivery-blocking. Then run strict QC with both the assembled baseline and claim ledger. Strict QC also blocks uncited fact paragraphs, banned promotional phrases, hand-drawn box diagrams, overlong English quotations, stub-length reports, and insufficient independent support. Delivery is complete only when required artifacts exist, strict QC passes, and the state machine reports `workflow_status=completed`.

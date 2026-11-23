@@ -33,7 +33,20 @@
 - **安全、真实的网页与 PDF 捕获**：限制输出目录、文件大小、PDF 页数、图片像素、重试次数和总时间；不隐藏自动化，不绕过登录、验证码、付费墙或 WAF。
 - **可审查交付物**：同时生成规范 Markdown、HTML、数据表、证据矩阵、争议矩阵、来源清单和资料缺口清单。
 - **券商研报正式入库**：广泛调研主动覆盖券商/投行研报；章节元数据保留分析师、预测期、关键假设、评级/目标价与利益冲突，聚合为 `data/broker_report_list.csv`。预测作为机构观点，底层事实回溯原始来源。
-- **两段式 QC 交付门禁**：核心检查（引用闭环、事实标签同段引用、独立来源、截图、漂移审计、可读性、内容禁忌）`exit 0` 即可交付；死链、链接警告、来源时效、段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json` 异步收尾。**死链永不阻断**——伪造 URL 无 Wayback 归档会在清单显眼标红，真实但反爬/失效的来源由 Wayback 存档佐证。新增段落级数值来源（单 C/D 级来源支撑的【事实】数值）与快变领域来源时效校验。
+- **两段式 QC 交付门禁**：核心检查（引用闭环、事实标签同段引用、独立来源、截图、漂移审计、可读性、内容禁忌）`exit 0` 即可交付；死链、链接警告、来源时效、段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json` 异步收尾。**死链永不阻断**——失效且无归档的 URL 会在清单中提示；Wayback 仅提供历史访问线索，不能据有无归档判定来源真伪或引用是否有效。新增段落级数值来源（单 C/D 级来源支撑的【事实】数值）与快变领域来源时效校验。
+
+### v2.2.0 研究流程更新
+
+| 研究环节 | 使用方法 | 可核对的结果 |
+|---|---|---|
+| 定大纲 | 为各章安排探索问题（`explore`）、寻找反证（`refute`）、追溯原始出处（`pin`）三类检索任务 | 计划保存在 `sources/stage3_search_tasks.yaml`，研究者在章节元数据中回填执行结果 |
+| 写核心结论 | 给必须回答的声明标记 `priority: P0`，关联支撑证据 | 严格质检检查支撑证据是否包含至少一份 A/B 级来源。只把权威来源列入书目无法满足检查 |
+| 核对论文 | 有论文清单时，在终检前运行下方的 `paper_enrich.py` 命令，用 DOI、arXiv ID 或标题核对书目信息 | `data/paper_list_enriched.csv` 给出逐条匹配结果，`data/paper_verification.json` 汇总待复核项。检索无匹配时需人工查原文 |
+| 复盘耗时 | 通过工作流推进阶段、登记章节开始和完成 | `data/time_breakdown.json` 记录阶段与章节耗时，其中包括等待确认的时间 |
+
+新增问题覆盖、检索结果与原文定位记录，并修复独立来源计数：同一网页即使填写不同机构/分组也只计一次，声明清单中的未关联来源不再补足证据数。终检重新校验元数据，生成 `data/quality_scorecard.json`，列出逐章的覆盖比例和具体补研建议。
+
+评分卡衡量研究记录的覆盖程度，事实正确性仍需核对引用原文。旧 schema v2 可继续使用，缺少新增记录时会收到补研提示。见[评分卡样例](examples/minimal/data/quality_scorecard.example.json)、[填写协议](references/research_quality.md)和[设计与回归验证](docs/research-quality-review-2026-09-10.md)。
 
 ### Diagram Design 实际效果
 
@@ -208,6 +221,9 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # 生成证据/争议矩阵 + 资料缺口
 uv run python tools/evidence.py --root projects/my-topic
 
+# data/paper_list.csv 有论文时，终检前用 Crossref 和 arXiv 核对书目信息
+uv run python tools/paper_enrich.py --root projects/my-topic --no-s2
+
 # 终检（两段式）：核心检查 exit 0 即可交付；死链/时效/数值来源等 advisory 项写 data/qc_debt.json，不阻断
 uv run python tools/qc.py --root projects/my-topic --strict \
   --citation-baseline projects/my-topic/report/_assembled_report.md \
@@ -245,7 +261,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py --strict` 是两段式门禁：核心检查（引用闭环、事实标签同段引用、独立来源数量、图片、内容禁忌、英文直接引语长度、分档最低完整度与可读性、总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件）须 `exit 0` 才可交付；死链、链接警告、快变领域来源时效、段落级数值来源等 advisory 项写入 `data/qc_debt.json`，不阻断。死链永不阻断——伪造 URL 无 Wayback 归档会在清单显眼标红。最低完整度用于拦截占位稿，不是鼓励重复或凑字数。
+- `qc.py --strict` 是两段式门禁：核心检查（引用闭环、事实标签同段引用、独立来源数量、图片、内容禁忌、英文直接引语长度、分档最低完整度与可读性、总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件）须 `exit 0` 才可交付；死链、链接警告、快变领域来源时效、段落级数值来源等 advisory 项写入 `data/qc_debt.json`，不阻断。死链永不阻断——失效链接记录在清单中；有无归档不能判定来源真伪或引用是否有效。最低完整度用于拦截占位稿，不是鼓励重复或凑字数。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
@@ -300,7 +316,18 @@ A reusable, evidence-driven research agent for **Claude Code, Codex/ChatGPT Work
 - **Bounded, compliant capture**: real browser/PDF capture with path, size, page, pixel, retry, and deadline limits; no access-control bypass.
 - **Reviewable deliverables**: Markdown, HTML, evidence and controversy matrices, data tables, source indexes, screenshots, and research gaps.
 - **Broker research as a first-class input**: the survey actively covers sell-side reports; chapter metadata preserves analysts, forecast horizons, assumptions, ratings/targets, disclosures, and access limits, then aggregates used reports into `data/broker_report_list.csv`. Forecasts remain institutional views and underlying facts are traced to primary sources.
-- **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — a fabricated URL has no Wayback archive and surfaces red in the debt manifest. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
+- **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — failed links are recorded in the debt manifest; archive presence or absence does not establish authenticity or citation support. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
+
+### What's new in the v2.2.0 research workflow
+
+| Stage | What to do | What to inspect |
+|---|---|---|
+| Outline | Plan exploration (`explore`), counter-evidence searches (`refute`), and primary-source lookups (`pin`) for each chapter | The plan lives in `sources/stage3_search_tasks.yaml`. Researchers record outcomes in chapter metadata. |
+| Chapter research | Mark essential claims with `priority: P0` and link supporting evidence | Strict QC requires at least one A/B-tier source in that evidence. A bibliography entry alone cannot satisfy the check. |
+| Paper verification | Before final QC, run `paper_enrich.py` on a populated paper list to check identifiers or titles | Inspect `data/paper_list_enriched.csv` for individual matches and `data/paper_verification.json` for the summary. Review unmatched entries against the original publication. |
+| Timing | Advance phases and record chapter starts and completions through the workflow | `data/time_breakdown.json` records elapsed time, including waits for confirmation. |
+
+Strict QC revalidates chapter metadata and writes `data/quality_scorecard.json` with question, evidence-location, and counter-search coverage plus actionable gaps. Duplicate URLs and declared original/reprint relationships count once. Older schema v2 records remain supported. The scorecard measures documentation coverage. Assessing factual accuracy requires checking the cited material. See the [sample scorecard](examples/minimal/data/quality_scorecard.example.json), [recording protocol](references/research_quality.md), and [design and regression notes](docs/research-quality-review-2026-09-10.md).
 
 ### Diagram Design output example
 
@@ -458,6 +485,9 @@ uv run python tools/render_html.py projects/my-topic/report/research_report.md -
 # Build evidence/controversy matrices + research gaps
 uv run python tools/evidence.py --root projects/my-topic
 
+# Check a populated data/paper_list.csv against Crossref and arXiv before final QC
+uv run python tools/paper_enrich.py --root projects/my-topic --no-s2
+
 # Final gate (two-phase): citations + evidence independence + content rules + figures + editing audit.
 # Core checks exit 0 = deliverable; advisory items (dead links / freshness / numeric sourcing) -> data/qc_debt.json (never blocking).
 uv run python tools/qc.py --root projects/my-topic --strict \
@@ -496,7 +526,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` is the deterministic assembly; `report/research_report.md` is the constrained editor's canonical final narrative.
 - Citations `[n]`, figures, and tables derive from `data/{citations,figures,tables}.csv`.
 - HTML is generated by `render_html.py` from Markdown + sidecar indexes — **never hand-author both versions**.
-- `qc.py --strict` is a two-phase gate: core checks (citation closure, local citations for fact paragraphs, independent support, figures, prohibited content, quotation length, minimum completeness, readability, factual drift after editing) must `exit 0` to deliver; advisory items (dead links, link warnings, source freshness for fast-moving domains, paragraph-level numeric sourcing) are written to `data/qc_debt.json` and never block. Dead links never block — fabricated URLs have no Wayback archive and surface red in the debt manifest. Completeness floors block stubs; they are not targets for repetitive padding.
+- `qc.py --strict` is a two-phase gate: core checks (citation closure, local citations for fact paragraphs, independent support, figures, prohibited content, quotation length, minimum completeness, readability, factual drift after editing) must `exit 0` to deliver; advisory items (dead links, link warnings, source freshness for fast-moving domains, paragraph-level numeric sourcing) are written to `data/qc_debt.json` and never block. Dead links never block — failed links are recorded in the debt manifest; archive availability does not establish authenticity or citation support. Completeness floors block stubs; they are not targets for repetitive padding.
 
 ### Delivery Tree (created by `scaffold.py`)
 

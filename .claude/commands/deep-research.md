@@ -36,11 +36,13 @@ argument-hint: <研究课题> [depth=快速|标准|深度] [mode=regular|plan|ex
 - 初步重要发现、争议点、资料缺口（同步填 `evidence/research_gaps.md`）。
 - 关键论文/人物/企业尽量读一手原文（WebFetch）。
 - 券商评级、目标价、盈利预测和市场空间测算仅作为机构观点；研报转引的数据尽量回溯财报、政策、标准或原始数据库。完整研报通常为 B 级，转载摘要降为 C 级，来源不明的聚合页仅作 D 级线索。不得绕过付费墙或传播未授权全文。
+- **模型分级**：若 Agent 工具支持为子代理指定模型，本阶段的并行检索子代理可用轻量模型（发现型任务对推理深度要求低）；阶段四分章深研保持主力模型。
 → 完成后调用状态机 `advance`；仅当返回 `needs_confirmation` 时确认。
 
 ## 阶段三 · 论证地图与正式大纲（基于调研，非预设）
 只为“视觉明显优于段落/表格”的关系、架构、流程、时间轴、象限或竞争格局规划 Diagram Design 图，通常每章不超过 2 张；记录 `fig_id / visual_type / size / detail / profile / source_ids / supports_claim_ids`。简单关系保留 Mermaid 或正文，不机械制图。
 先产出 `sources/stage3_argument_map.yaml`：研究问题、一句话答案、总论点、3–7 个核心分论点、分论点依赖关系、所需正反证据、承载章节与决策含义。再据此产出三级大纲 `sources/stage3_outline.md`。**不默认套用固定 13 章**；历史、人物、政策、企业等材料只有在支撑核心论点时才独立成章，否则放进最相关章节或证据附件。每章列出：读者问题、一句话结论、在总论证中的作用、依赖/交给相邻章节的问题、目标字数、所需正反证据、预期图表与截图。大纲必须是调研结果，不是预设答案的包装。
+**检索任务类型化**：大纲定稿时为每章编译类型化检索任务清单（写入 `sources/stage3_search_tasks.yaml`，随研究卡下发）：`explore`=章节探索、`refute`=反方/局限/失败案例检索、`pin`=必引原文定向锁定（回到提出方法、数据集、指标的一手来源，不引二手转述）。每条任务带 `task_id / focus / 预期证据`，阶段四登记进章节 `search_tasks` 并回填状态；未完成的 refute 任务终检给补研建议。确实无反证也是合法结果，记录查询即可，不得虚构反证。
 → 完成后调用状态机 `advance`；仅当返回 `needs_confirmation` 时确认。若返回 `stop`（计划模式），在此停止，不得进入阶段四。
 
 ## 阶段四 · 分章深研（派 researcher 子代理）
@@ -49,7 +51,7 @@ argument-hint: <研究课题> [depth=快速|标准|深度] [mode=regular|plan|ex
 若任务中断，先运行 `next-chapter`；`chapter_progress` 中已为 `completed` 且配对 `.md`/`.meta.json` 仍存在的章节必须跳过，不得重复调研。
 
 对每一章：
-1. 先写「研究卡」（可基于 `templates/research_card.md`）。
+1. 先写「研究卡」（可基于 `templates/research_card.md`），读取 `references/research_quality.md`；预先登记问题 ID 与验收条件，让研究者回填问题覆盖、检索结果和原文定位；研究卡同时下发阶段三编译的 explore/refute/pin 检索任务，由研究者登记进 `.meta.json.search_tasks` 并回填状态；核心结论可在 `.meta.json` 标 `priority: P0`（P0 声明必须有 A/B 级来源背书，终检强制）。
    调度方须在并行派发前预留全局唯一的所有截图与 Diagram Design `fig_id`，避免子代理碰撞。
 2. 派发前运行 `workflow_policy.py chapter --root <项目名> --chapter <chNN> --status in_progress`。用 **Agent 工具派发 `researcher` 子代理**执行该章（独立维度可多条并行；单消息内放多个 Agent 调用以并发）。**每个 researcher 的 prompt 必须前置：「先读 `data/glossary.md`，全文术语定义以此为准，不得自行另造或漂移」**，并告知本章涉及的术语条目。子代理同时产出 `report/_draft_<chNN>_<slug>.md`（只含读者正文）与同名 `.meta.json`（数据点、截图、争议、缺口）。正文使用内联源标签 `[[SRC|...]]`（见 researcher 契约）。**截图须在草稿正文支撑处用 `![简述](images/FIG-NNN.png)` 内联（fig_id 全局唯一、按出现顺序续编），不得在草稿末尾或单设「截图」节集中罗列**（详见 researcher 契约）。派发的 researcher 受其契约熔断约束（连续 3 轮检索无新可验证来源或进展即返回 `verified:false` + 已查清单）；若子代理返回未验证，据返回决定升级检索策略、换维度、转资料缺口或标 `failed`，**不得原样重派同一维度**——这正是 `max_chapter_attempts` 兜底要防的空转。
 3. 两个文件完成后运行 `workflow_policy.py chapter ... --status completed`。工具会验证配对文件存在；失败章节标记 `failed`，保留错误并从 `next-chapter` 继续。
@@ -71,9 +73,10 @@ argument-hint: <研究课题> [depth=快速|标准|深度] [mode=regular|plan|ex
 2. `uv run python tools/diagram_assets.py <项目名>/data/diagram_manifest.csv --root <项目名>` 校验静态 Diagram Design 源、导出 PNG，并合并 `figures.csv`。图必须标注“根据公开资料整理”，不得冒充原始截图；无登记图时命令安全空操作。
 3. `uv run python tools/render_html.py <项目名>/report/research_report.md --root <项目名>` 生成自包含 HTML。
 4. `uv run python tools/evidence.py --root <项目名>` 汇总证据库。
-5. `uv run python tools/qc.py --root <项目名> --citation-baseline <项目名>/report/_assembled_report.md --claim-ledger <项目名>/data/claim_ledger.json --depth <档位> --strict` 做终检。**两段式交付**：核心检查（重复/未登记引用、缺图文件、漂移 errors、占位截图、严重可读性等 errors）`exit 0` 即视为核心通过、可交付；非核心的 advisory 项（死链、链接警告、来源时效、段落级数值来源、事实标签密度等）不阻断交付，自动写入 `data/qc_debt.json` 作为已跟踪技术债。严格模式下新增数字/日期/实体、确定性或因果升级、限制条件丢失、占位截图、引用元数据缺失和严重可读性问题仍会阻止交付（它们是 errors，非 advisory）。core `exit 0` 后运行 `uv run python tools/workflow_policy.py record-debt --root <项目名>` 把债务摘要记入状态机。**死链永不阻断**——伪造 URL 无 Wayback 归档会在 debt 清单中显眼标红，真实但反爬/失效的来源则由 Wayback 存档佐证其曾存在。
-6. 写 `<项目名>/README.md`（课题、文件结构、阅读方式、数据截止、截图说明、研究限制、更新方式）；「质检状态」一节须区分「核心通过（exit 0）」与「advisory 债务摘要（来自 qc_debt.json）」。
-7. 最终交付：MD + HTML + evidence 矩阵 + 截图/生成图目录；向用户汇报路径、qc 核心结果与 debt 摘要。
+5. `uv run python tools/paper_enrich.py --root <项目名> [--mail-to 邮箱]` 验证 `data/paper_list.csv` 文献存在性并回填规范元数据（Crossref/arXiv，可选 S2）。`not_found` 只是嫌疑提示——未被学术索引收录的中文文献/白皮书会落入此类，终检只作 advisory，须人工核对。
+6. `uv run python tools/qc.py --root <项目名> --citation-baseline <项目名>/report/_assembled_report.md --claim-ledger <项目名>/data/claim_ledger.json --depth <档位> --strict` 做终检。**两段式交付**：核心检查（重复/未登记引用、缺图文件、漂移 errors、占位截图、严重可读性等 errors）`exit 0` 即视为核心通过、可交付；非核心的 advisory 项（死链、链接警告、来源时效、段落级数值来源、事实标签密度等）不阻断交付，自动写入 `data/qc_debt.json` 作为已跟踪技术债。严格模式下新增数字/日期/实体、确定性或因果升级、限制条件丢失、占位截图、引用元数据缺失和严重可读性问题仍会阻止交付（它们是 errors，非 advisory）。core `exit 0` 后运行 `uv run python tools/workflow_policy.py record-debt --root <项目名>` 把债务摘要记入状态机。**死链永不阻断**——失效链接记录在 debt 清单中，Wayback 仅提供历史访问线索；有无归档不能判定来源真伪或引用是否有效。
+7. 写 `<项目名>/README.md`（课题、文件结构、阅读方式、数据截止、截图说明、研究限制、更新方式）；「质检状态」一节须区分「核心通过（exit 0）」与「advisory 债务摘要（来自 qc_debt.json）」。
+8. 最终交付：MD + HTML + evidence 矩阵 + 截图/生成图目录；向用户汇报路径、qc 核心结果与 debt 摘要。
 → qc 核心检查 `exit 0`、交付物齐全且 `record-debt` 完成后，调用状态机 `advance`，必须得到 `workflow_status=completed` 才算完成。advisory 债务不阻塞完成，但须在汇报中如实披露。
 
 ## 始终遵守

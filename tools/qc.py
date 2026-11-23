@@ -24,10 +24,14 @@ from urllib.parse import urlparse
 
 try:
     from tools.claim_ledger import audit_text
-    from tools.source_identity import source_independence_key
+    from tools.source_identity import independent_source_groups
+    from tools.aggregate_meta import validate_chapters
+    from tools.research_quality import build_quality_scorecard
 except ModuleNotFoundError:  # 兼容直接执行 python tools/qc.py
     from claim_ledger import audit_text
-    from source_identity import source_independence_key
+    from source_identity import independent_source_groups
+    from aggregate_meta import validate_chapters
+    from research_quality import build_quality_scorecard
 
 SEARCH_HOSTS = {"google.com", "www.google.com", "bing.com", "www.bing.com",
                 "baidu.com", "www.baidu.com", "duckduckgo.com", "www.duckduckgo.com"}
@@ -211,6 +215,76 @@ def check_prohibited_content(report: Report, md_text: str, strict: bool) -> None
         report.ok.append("内容禁忌：无禁用套话、框线图或过长英文直引")
 
 
+def check_paper_verification(report: Report, root: Path) -> None:
+    """文献存在性验证（advisory）：消费 paper_enrich.py 的验证结果，永不阻断。
+
+    not_found ≠ 编造实锤——未被学术索引收录的中文文献、白皮书、厂商报告都会落入
+    not_found；本检查只把它们变成可跟踪的债务，由人工核对原文收尾。
+    """
+    paper_list = root / "data" / "paper_list.csv"
+    if not paper_list.exists():
+        return
+    try:
+        import csv as _csv
+        with paper_list.open(encoding="utf-8") as handle:
+            rows = [r for r in _csv.DictReader(handle)
+                    if any((v or "").strip() for v in r.values())]
+    except OSError:
+        rows = []
+    if not rows:
+        report.ok.append("文献存在性：paper_list 无数据行")
+        return
+
+    verification_path = root / "data" / "paper_verification.json"
+    if not verification_path.exists():
+        report.warnings.append(
+            f"文献验证缺失：paper_list 有 {len(rows)} 行文献未做存在性验证；"
+            "建议运行 uv run python tools/paper_enrich.py --root <项目名>"
+        )
+        return
+    try:
+        manifest = json.loads(verification_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        report.warnings.append(f"文献存在性：无法读取 paper_verification.json：{exc}")
+        return
+    try:
+        verified_mtime = datetime.fromisoformat(manifest.get("generated_at", "")).timestamp()
+        if paper_list.stat().st_mtime > verified_mtime + 60:
+            report.warnings.append(
+                "文献验证缺失：paper_list 在上次验证后有改动，建议重跑 paper_enrich.py"
+            )
+    except (OSError, ValueError):
+        pass
+
+    results = manifest.get("rows", [])
+    not_found = [r for r in results if r.get("status") == "not_found"]
+    mismatch = [r for r in results if r.get("status") == "mismatch"]
+    network_error = [r for r in results if r.get("status") == "network_error"]
+    if not_found:
+        titles = "；".join(f"《{(r.get('title') or '')[:40]}》" for r in not_found[:6])
+        report.warnings.append(
+            f"文献存在性：{len(not_found)} 篇在 Crossref/arXiv/S2 无匹配（编造嫌疑或"
+            f"未被索引，须人工核对原文，详见 data/paper_verification.json）：{titles}"
+        )
+    if mismatch:
+        titles = "；".join(f"《{(r.get('title') or '')[:40]}》" for r in mismatch[:6])
+        report.warnings.append(
+            f"文献存在性：{len(mismatch)} 篇标题/年份与库中记录对不上（疑似转引错位，须人工核对）：{titles}"
+        )
+    if network_error:
+        report.warnings.append(
+            f"文献存在性：{len(network_error)} 篇因网络/限流未完成验证（不代表文献有问题），建议重跑 paper_enrich.py"
+        )
+    verified = sum(1 for r in results if r.get("status") == "verified")
+    if not not_found and not mismatch and not network_error:
+        report.ok.append(f"文献存在性：{verified}/{len(results)} 行验证通过")
+    else:
+        report.ok.append(
+            f"文献存在性：{verified}/{len(results)} 行验证通过，"
+            f"{len(not_found) + len(mismatch)} 项待人工核对（advisory）"
+        )
+
+
 def check_evidence_independence(report: Report, root: Path, depth: str, strict: bool) -> None:
     """从 chapter_meta 追踪结论到证据与来源，防止“有 ID 但无交叉验证”。"""
     path = root / "data" / "chapter_meta.json"
@@ -226,10 +300,15 @@ def check_evidence_independence(report: Report, root: Path, depth: str, strict: 
         report.errors.append("chapter_meta.json 顶层必须是数组")
         return
 
+    if not chapters:
+        add_issue(report, "章节元数据为空，无法验证研究结论", strict)
+        return
+
     minimum = 1 if depth == "快速" else 2
     failures: list[str] = []
     numeric_failures: list[str] = []
     weak_tier_failures: list[str] = []
+    p0_weak_failures: list[str] = []
     checked = 0
     for chapter in chapters:
         if not isinstance(chapter, dict):
@@ -246,19 +325,17 @@ def check_evidence_independence(report: Report, root: Path, depth: str, strict: 
             if isinstance(item, dict) and item.get("evidence_id")
         }
 
-        def source_ids_for(evidence_ids: list[str], direct_ids: list[str] | None = None) -> list[str]:
-            source_ids = list(direct_ids or [])
+        def source_ids_for(evidence_ids: list[str]) -> list[str]:
+            source_ids = []
             for evidence_id in evidence_ids:
                 item = evidence.get(str(evidence_id), {})
                 source_ids.extend(str(x) for x in item.get("source_ids", []) if x)
             return list(dict.fromkeys(source_ids))
 
-        def groups_for(evidence_ids: list[str], direct_ids: list[str] | None = None) -> set[str]:
-            return {
-                source_independence_key(sources[sid])
-                for sid in source_ids_for(evidence_ids, direct_ids)
-                if sid in sources
-            }
+        def groups_for(evidence_ids: list[str]) -> list[list[dict]]:
+            return independent_source_groups([
+                sources[sid] for sid in source_ids_for(evidence_ids) if sid in sources
+            ])
 
         conclusion = chapter.get("chapter_conclusion") or {}
         conclusion_groups = groups_for(conclusion.get("supporting_evidence_ids", []))
@@ -273,25 +350,37 @@ def check_evidence_independence(report: Report, root: Path, depth: str, strict: 
             if not isinstance(claim, dict):
                 continue
             linked = [evidence.get(str(eid), {}) for eid in claim.get("supporting_evidence_ids", [])]
-            is_numeric = bool(re.search(r"\d", str(claim.get("text") or ""))) or any(
-                isinstance(item.get("value"), (int, float))
-                or bool(re.search(r"\d", str(item.get("value") or "")))
-                for item in linked
+            # 一级数值类结论的文档口径（CLAUDE.md）：市场规模/收入/用户/份额/融资/排名。
+            # 仅当声明断言这六类指标时强制双独立来源；论文/基准自测数值（如 77%/84%）
+            # 与协议版本号等不属该口径。「用户」须带数量语义（用户数/规模/活跃），
+            # 「用户同意」「用户自组工具」等非计量用法不触发。带【机构观点·】/【观点·】
+            # 标签的评级、目标价、市场空间测算按 CLAUDE.md 券商研报规则已强制标注、
+            # 不得写成事实，不在本检查内。
+            _text = str(claim.get("text") or "")
+            _opinion_tagged = "【机构观点" in _text or "【观点·" in _text
+            _METRIC_RE = re.compile(
+                r"市场规模|市场空间|市场份额|市场支出|收入|用户数|用户规模|活跃用户|月活|付费用户|融资|估值|收购金额|对价|排名"
             )
-            if not is_numeric:
+            is_numeric = bool(_METRIC_RE.search(_text)) and not _opinion_tagged
+            is_p0 = claim.get("priority") == "P0"
+            # P0（研究者自标的必答核心声明）与数值声明同权受 A/B 级来源约束；
+            # 借鉴 paper-orchestra 的 P0/P1 优先级思想：标 P0 即承诺"此结论必须有
+            # 一级/权威来源背书"，未达标按既有 weak-tier 口径处理。
+            if not is_numeric and not is_p0:
                 continue
             groups = groups_for(
                 claim.get("supporting_evidence_ids", []),
-                [str(x) for x in claim.get("source_ids", [])],
             )
-            if len(groups) < 2:
+            if is_numeric and len(groups) < 2:
                 numeric_failures.append(f"{chapter_id}:{claim.get('claim_id', '?')}={len(groups)}/2")
-            numeric_sources = source_ids_for(
+            claim_sources = source_ids_for(
                 claim.get("supporting_evidence_ids", []),
-                [str(x) for x in claim.get("source_ids", [])],
             )
-            if not any(sources[sid].get("tier") in {"A", "B"} for sid in numeric_sources if sid in sources):
-                weak_tier_failures.append(f"{chapter_id}:{claim.get('claim_id', '?')}")
+            if not any(sources[sid].get("tier") in {"A", "B"} for sid in claim_sources if sid in sources):
+                if is_p0:
+                    p0_weak_failures.append(f"{chapter_id}:{claim.get('claim_id', '?')}")
+                elif is_numeric:
+                    weak_tier_failures.append(f"{chapter_id}:{claim.get('claim_id', '?')}")
 
     if failures:
         add_issue(report, f"章节重要结论独立来源不足：{failures}", strict)
@@ -299,7 +388,9 @@ def check_evidence_independence(report: Report, root: Path, depth: str, strict: 
         add_issue(report, f"数值声明未达到 2 个独立来源：{numeric_failures}", strict)
     if weak_tier_failures:
         add_issue(report, f"重要/数值声明仅由 C/D 级或未知来源支撑：{sorted(set(weak_tier_failures))}", strict)
-    if not failures and not numeric_failures and not weak_tier_failures:
+    if p0_weak_failures:
+        add_issue(report, f"P0 核心声明仅由 C/D 级或未知来源支撑：{sorted(set(p0_weak_failures))}", strict)
+    if not failures and not numeric_failures and not weak_tier_failures and not p0_weak_failures:
         report.ok.append(f"证据独立性：{checked} 个章节结论通过（最低 {minimum} 个独立来源）")
 
 
@@ -604,8 +695,8 @@ def wayback_snapshot(url: str, timeout: float = 6.0) -> str | None:
 def _dead_or_archived(status_msg: str, url: str) -> tuple[str, str]:
     """死链判定前查 Wayback：有归档则降为 archived（保留死因 + 存档链接），否则保持 dead。
 
-    这样伪造 URL（无归档）在 qc_debt.json 中显眼标红，而真实但反爬/失效的来源能被
-    Wayback 佐证其曾存在——守护「不编造 URL」红线的同时不再惩罚好来源。
+    归档只提供历史访问线索，不验证内容是否支撑论断；无归档也不能判定 URL 伪造。
+    两种结果均作为 advisory 记录。
     """
     snap = wayback_snapshot(url)
     if snap:
@@ -750,10 +841,14 @@ def check_readability(
     plain = re.sub(r"【[^】]+】", "", plain)
     plain = re.sub(r"\[\d+(?:[-,，]\s*\d+)*\]", "", plain)
     # Split numbered/bullet list items into separate sentences for readability metrics
-    plain = re.sub(r"\s*;\s*-\s+", "。\n", plain)
-    plain = re.sub(r"\s*-\s+\*\*", "。\n**", plain)
-    plain = re.sub(r"\n\s*-\s+", "\n", plain)
-    plain = re.sub(r"\n\s*\d+\.\s+", "\n", plain)
+    # 段落以空行分隔，替换须保留 "\n\n"：用 "\n" 会因 \s* 吞并既有空行，
+    # 把列表项重新粘合回前一段落（与拆分意图相反）。
+    plain = re.sub(r"\s*;\s*-\s+", "。\n\n", plain)
+    plain = re.sub(r"\s*-\s+\*\*", "。\n\n**", plain)
+    plain = re.sub(r"\n\s*-\s+", "\n\n", plain)
+    plain = re.sub(r"\n\s*\d+\.\s+", "\n\n", plain)
+    # 目录条目行（无句末标点，跨段落聚合后会被误计为超长句）；仅剔除整行形如「第 N 章 标题」且句内无标点的行
+    plain = re.sub(r"(?m)^第\s*[0-9一二三四五六七八九十]+\s*章\s+[^\n。！？!?；]*$", "", plain)  # 目录行剔除含中文数字（agent-mcp-gateway 课题补充）
     body_chars = len(re.sub(r"\s+", "", plain))
 
     paragraphs = [re.sub(r"\s+", " ", p.strip())
@@ -901,6 +996,10 @@ def _categorize_warning(msg: str) -> str:
         return "staleness"
     if msg.startswith("段落级数值声明"):
         return "numeric_sourcing"
+    if msg.startswith("文献存在性：") or msg.startswith("文献验证缺失："):
+        return "paper_verification"
+    if msg.startswith("研究质量诊断："):
+        return "research_quality"
     return "other"
 
 
@@ -932,6 +1031,38 @@ def _write_qc_debt(root: Path, rep: Report, exit_code: int) -> None:
     out.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def check_research_quality(report: Report, root: Path, strict: bool) -> bool:
+    """终检重新校验元数据，避免绕过聚合器；每次覆盖诊断，防止陈旧成功结果。"""
+    output = root / "data" / "quality_scorecard.json"
+    try:
+        document = json.loads((root / "data" / "chapter_meta.json").read_text(encoding="utf-8"))
+        chapters, validation = validate_chapters(document)
+        errors = validation.errors
+    except (OSError, ValueError) as exc:
+        chapters, errors = [], [f"无法读取章节元数据：{exc}"]
+    if errors:
+        for error in errors:
+            add_issue(report, "研究元数据：" + error, strict)
+        scorecard = {"schema_version": 1, "status": "invalid_metadata", "errors": errors}
+    else:
+        scorecard = build_quality_scorecard(chapters)
+        scorecard["status"] = "evaluated"
+        scorecard["metadata_warnings"] = validation.warnings
+        for warning in validation.warnings:
+            report.warnings.append("研究质量诊断：" + warning)
+        if scorecard["findings"]:
+            report.warnings.append(
+                f"研究质量诊断：{len(scorecard['findings'])} 项补研/溯源建议，见 data/quality_scorecard.json（不是事实正确率）"
+            )
+        report.ok.append("研究元数据：结构与证据引用闭环通过")
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(scorecard, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    except OSError as exc:
+        report.warnings.append(f"研究质量诊断：无法写入 quality_scorecard.json：{exc}")
+    return not errors
+
+
 def run(
     root: Path,
     report_md: Path,
@@ -954,10 +1085,12 @@ def run(
 
     check_citations(rep, md_text, citations, root, strict)
     check_source_freshness(rep, citations, strict)
+    check_paper_verification(rep, root)
     check_fact_citation_locality(rep, md_text, strict)
     check_numeric_claim_sourcing(rep, md_text, citations, strict)
     check_prohibited_content(rep, md_text, strict)
-    check_evidence_independence(rep, root, depth, strict)
+    if check_research_quality(rep, root, strict):
+        check_evidence_independence(rep, root, depth, strict)
     check_figures(rep, md_text, figures, root, strict)
     check_diagrams(rep, md_text, diagrams, figures, root, strict)
     if not skip_readability:

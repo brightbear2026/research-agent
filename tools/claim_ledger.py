@@ -29,7 +29,7 @@ LIMITATION_TERMS = ("限制", "局限", "反证", "争议", "不确定", "仅适
 def _clean_markdown(text: str) -> str:
     text = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", text, flags=re.DOTALL)
     text = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
-    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"</?[A-Za-z/?!][^>]*>", " ", text)  # 仅剥离真实 HTML 标签，避免把「<7%」等正文误当标签吞掉大段文本
     text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
     return text
 

@@ -1,0 +1,11 @@
+{
+  "metadata_files": 15,
+  "baseline_valid": 12,
+  "current_valid": 12,
+  "newly_invalid": 0,
+  "valid_chapters": 98,
+  "chapters_with_question_plan": 0,
+  "evidence_records": 1214,
+  "evidence_with_provenance": 0,
+  "dual_role_warnings": 40
+}

@@ -15,6 +15,7 @@ from tools.workflow_policy import (
     register_chapters,
     save_state,
     update_chapter_status,
+    write_time_breakdown,
 )
 
 
@@ -147,6 +148,54 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertEqual(loaded["completeness_debt"]["warnings"], 3)
             self.assertEqual(loaded["completeness_debt"]["by_category"]["staleness"], 2)
             self.assertTrue(loaded["completeness_debt"]["core_passed"])
+
+
+class TelemetryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_config()
+        self.state = initial_state("execution", self.config)
+
+    def test_advance_records_phase_duration_and_resets_start(self) -> None:
+        self.assertIn("phase_started_at", self.state)
+        updated, action = advance_state(self.state, self.config, confirmed=True)
+        self.assertEqual(action, "advanced")
+        first_phase = self.config["phases"][0]
+        durations = updated["telemetry"]["phase_durations"]
+        self.assertIn(first_phase, durations)
+        self.assertGreaterEqual(durations[first_phase], 0.0)
+        self.assertNotEqual(updated["phase_started_at"], self.state["phase_started_at"])
+
+    def test_chapter_lifecycle_sets_started_and_completed(self) -> None:
+        state = register_chapters(self.state, ["ch01"])
+        state = update_chapter_status(state, "ch01", "in_progress")
+        self.assertIn("started_at", state["chapter_progress"]["ch01"])
+        state = update_chapter_status(state, "ch01", "completed")
+        item = state["chapter_progress"]["ch01"]
+        self.assertIn("completed_at", item)
+
+    def test_write_time_breakdown_produces_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = register_chapters(self.state, ["ch01", "ch02"])
+            state = update_chapter_status(state, "ch01", "in_progress")
+            state = update_chapter_status(state, "ch01", "completed")
+            state, _ = advance_state(state, self.config, confirmed=True)
+            write_time_breakdown(root, state)
+            out = root / "data" / "time_breakdown.json"
+            self.assertTrue(out.exists())
+            manifest = __import__("json").loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["mode"], "execution")
+            self.assertTrue(any(p["phase"] == self.config["phases"][0] for p in manifest["phases"]))
+            chapters = {c["chapter_id"]: c for c in manifest["chapters"]}
+            self.assertIn("ch01", chapters)
+            self.assertTrue(chapters["ch01"]["completed"])
+
+    def test_old_state_without_telemetry_still_advances(self) -> None:
+        legacy = {k: v for k, v in self.state.items()
+                  if k not in ("phase_started_at", "telemetry")}
+        updated, action = advance_state(legacy, self.config, confirmed=True)
+        self.assertEqual(action, "advanced")
+        self.assertNotIn(self.config["phases"][0], updated.get("telemetry", {}).get("phase_durations", {}))
 
 
 if __name__ == "__main__":

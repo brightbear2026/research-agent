@@ -1,7 +1,7 @@
 ---
 name: deep-research
 description: "Use when user requests systematic deep research on a topic. Six-phase pipeline (survey → evidence → outline → chapter research → assembly+editing → delivery) producing Markdown+HTML dual-format reports with evidence matrices. Enforces no-fabrication red lines, source tiering, claim-ledger audits, workflow modes, and real screenshots. Ported from Claude Code research-agent v2."
-version: 2.1.0
+version: 2.2.0
 author: Hermes Agent (ported from brightbear2026/research-agent)
 license: MIT
 platforms: [linux, macos, windows]
@@ -19,6 +19,8 @@ metadata:
 > If this port diverges from the canonical workflow, the canonical files take precedence.
 
 Six-phase deep research pipeline that produces Markdown + HTML dual-format reports with evidence matrices, claim-ledger audits, and workflow state machine. Domain: tech/industry. Enforces strict no-fabrication red lines, source tiering (A/B/C/D), cross-verification, claim-ledger drift detection, and real Playwright screenshots.
+
+研究质量协议：分章前读取 `references/research_quality.md`，将研究卡问题、实际检索结果及原文位置写入章节元数据。最终 QC 自动生成 `data/quality_scorecard.json`；按核心缺口补研并遵守既有预算，不把记录覆盖率当成事实正确率。
 
 ## When to Use
 
@@ -49,6 +51,14 @@ cd <skill_dir> && uv run python tools/check_env.py
 4. **Real screenshots only**: Playwright captures via `tools/screenshot.py`. Failed captures get placeholder + index. No AI-generated/fabricated images.
 5. **Tool-level isolation for editor**: report-editor runs in a file-only Hermes process (`-t file`) — physically incapable of web access.
 6. **Claim-ledger drift detection**: editor cannot introduce new numbers/dates/entities/certainty-upgrades beyond the assembled report. QC `--claim-ledger` blocks violations.
+
+## What's New in v2.2 (vs v2.1)
+
+1. **Paper existence verification** (`tools/paper_enrich.py`): verifies `data/paper_list.csv` entries against Crossref/arXiv (optional Semantic Scholar), backfills canonical metadata, and distinguishes `not_found` (fabrication suspect OR unindexed Chinese paper/whitepaper — human review) from `network_error` (no suspicion). Results feed `qc.py` as advisory-only debt, never blocking.
+2. **Typed search tasks** (explore/refute/pin): Phase 3 compiles per-chapter search task lists into `sources/stage3_search_tasks.yaml`; chapters register them in `.meta.json.search_tasks` with status backfill. Open refute tasks surface as scorecard findings — counter-searching becomes a tracked ledger, not good will.
+3. **P0 claim priority** (optional): claims/chapter conclusions may declare `priority: P0`, committing to A/B-tier source backing; `qc.py` enforces it like the existing weak-tier rule. No hard citation quota — coverage is a process metric.
+4. **Phase/chapter time telemetry**: `workflow_policy.py` records wall-clock durations to `data/time_breakdown.json` (includes confirmation waits; advisory only).
+5. **Model tiering guidance**: Phase 2 survey subagents may use lighter models when the host supports per-subagent model selection; Phase 4 chapter research keeps the primary model.
 
 ## What's New in v2.1 (vs v2.0)
 
@@ -114,14 +124,15 @@ Read the Phase 2 source dimensions from the canonical `.claude/commands/deep-res
 1. Produce `sources/stage3_argument_map.yaml`.
 2. Produce `sources/stage3_outline.md` (three-level outline).
 3. Each chapter lists: reader question, one-line conclusion, role, dependencies, target word count, evidence needed.
-4. Plan Diagram Design only when a relationship, architecture, flow, timeline, quadrant, or competitive landscape is materially clearer than prose/table. Usually cap at two per chapter and record `fig_id`, visual type, size, detail, profile, source IDs, and supported claim IDs.
+4. Compile typed search tasks per chapter into `sources/stage3_search_tasks.yaml`: `explore` (chapter exploration) / `refute` (counter-evidence & limitations) / `pin` (must-cite primary source — trace back to the original paper introducing the method/dataset/metric, not secondhand retellings). Each task carries `task_id / focus / expected evidence`; Phase 4 registers them into chapter `search_tasks`.
+5. Plan Diagram Design only when a relationship, architecture, flow, timeline, quadrant, or competitive landscape is materially clearer than prose/table. Usually cap at two per chapter and record `fig_id`, visual type, size, detail, profile, source IDs, and supported claim IDs.
 
 → Call `advance`. If returns `stop` (plan mode), stop here.
 
 ## Phase 4: Chapter Deep Research (delegate researcher subagents)
 
 1. Register chapters: `uv run python tools/workflow_policy.py register-chapters --root projects/<slug> --chapter ch01 --chapter ch02 ...`
-2. For each chapter, write a research card (based on `templates/research_card.md`).
+2. For each chapter, write a research card (based on `templates/research_card.md`) and dispatch it with the Phase 3 typed search tasks (explore/refute/pin) for the researcher to register in `.meta.json.search_tasks`.
    Reserve all screenshot and generated-diagram `fig_id` values globally before parallel dispatch.
 3. **Dispatch researcher subagent via `delegate_task`**. Load the canonical `.claude/agents/researcher.md` as context; `references/researcher_brief.md` is only a pointer and must not be used as the prompt by itself.
 4. Before dispatch: `workflow_policy.py chapter --root projects/<slug> --chapter <chNN> --status in_progress`
@@ -176,17 +187,18 @@ cd <skill_dir> && uv run python tools/qc.py --root projects/<slug> \
 2. **Diagram Design assets**: `uv run python tools/diagram_assets.py projects/<slug>/data/diagram_manifest.csv --root projects/<slug>`. These are explanatory assets compiled from verified public sources, never original evidence screenshots. An empty manifest is a safe no-op.
 3. **Render HTML**: `uv run python tools/render_html.py projects/<slug>/report/research_report.md --root projects/<slug>`
 4. **Evidence matrix**: `uv run python tools/evidence.py --root projects/<slug>`
-5. **Final QC** (must pass with `--strict`):
+5. **Paper verification** (advisory): `uv run python tools/paper_enrich.py --root projects/<slug> [--mail-to you@example.com]` verifies `data/paper_list.csv` existence via Crossref/arXiv (optional S2 with `S2_API_KEY`). `not_found` is a suspect flag, not proof of fabrication — unindexed Chinese papers/whitepapers land there; human review closes the debt.
+6. **Final QC** (must pass with `--strict`):
    ```bash
    cd <skill_dir> && uv run python tools/qc.py --root projects/<slug> \
      --citation-baseline projects/<slug>/report/_assembled_report.md \
      --claim-ledger projects/<slug>/data/claim_ledger.json \
      --depth <depth> --strict
    ```
-6. **Record advisory QC debt**: `uv run python tools/workflow_policy.py record-debt --root projects/<slug>`.
-7. Write `projects/<slug>/README.md`, including the core QC result and advisory debt summary.
-8. **Deliver to user**: copy all outputs to delivery folder (see Delivery section).
-9. Report to user: paths to MD + HTML + evidence matrix + screenshots/generated diagrams + QC results.
+7. **Record advisory QC debt**: `uv run python tools/workflow_policy.py record-debt --root projects/<slug>`.
+8. Write `projects/<slug>/README.md`, including the core QC result and advisory debt summary.
+9. **Deliver to user**: copy all outputs to delivery folder (see Delivery section).
+10. Report to user: paths to MD + HTML + evidence matrix + screenshots/generated diagrams + QC results.
 
 → Call `advance`. Must get `workflow_status=completed`.
 
