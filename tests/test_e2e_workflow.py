@@ -36,11 +36,7 @@ class EndToEndWorkflowTests(unittest.TestCase):
             state = update_chapter_status(state, "ch01", "in_progress")
 
             draft = root / "report" / "_draft_ch01_intro.md"
-            analysis = "\n\n".join(
-                "【研究判断】在已列明的口径、时间和地域边界内，应先比较两份独立材料的定义与方法，"
-                "再解释一致结果对决策的意义；现有证据只支撑本章限定范围，不应外推为普遍结论。"
-                for _ in range(60)
-            )
+            analysis = "两份独立材料的统计范围一致，结论仍以所列时间和地域为限。"
             draft.write_text(
                 "# 第 1 章 市场\n\n## 本章结论\n\n"
                 "【事实】2025 年中国目标市场规模为 10 亿元"

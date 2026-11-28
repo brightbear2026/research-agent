@@ -150,7 +150,10 @@ def enhance_figures(body_html: str, figures: list[dict]) -> str:
             display_src = "../" + src
         else:
             display_src = src
-        return (f'<figure><img src="{display_src}" alt="{alt}">'
+        image = f'<img src="{display_src}" alt="{alt}">'
+        if status == "已截图":
+            image = f'<a class="source-capture" href="{display_src}" aria-label="查看原图">{image}</a>'
+        return (f'<figure>{image}'
                 f'<figcaption>{caption}{note}</figcaption></figure>')
 
     # <p><img ...></p>  →  <figure>（重建干净的 img 标签）

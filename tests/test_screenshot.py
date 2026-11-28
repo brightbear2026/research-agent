@@ -8,11 +8,14 @@ from unittest.mock import patch
 
 from tools.screenshot import (
     MAX_PDF_BYTES,
+    _needs_browser,
     capture_pdf,
     classify_access_obstacle,
+    load_existing,
     parse_pages,
     resolve_image_output,
     retry_after_seconds,
+    run,
 )
 
 
@@ -98,6 +101,43 @@ class ScreenshotSafetyTests(unittest.TestCase):
             self.assertFalse(ok)
             self.assertIn("有限重试耗尽", reason)
             self.assertEqual(client.calls, 3)
+
+
+class LazyBrowserTests(unittest.TestCase):
+    """纯 PDF 清单不应依赖浏览器：没有 Chromium 也能完成。"""
+
+    def test_needs_browser_only_for_pending_web_rows(self) -> None:
+        pdf_row = {"fig_id": "FIG-001", "url": "https://example.com/a.pdf", "capture": "pdf"}
+        web_row = {"fig_id": "FIG-002", "url": "https://example.com/", "capture": "viewport"}
+        self.assertFalse(_needs_browser([pdf_row], {}, force=False))
+        self.assertTrue(_needs_browser([pdf_row, web_row], {}, force=False))
+        self.assertFalse(_needs_browser([web_row], {"FIG-002": {"status": "已截图"}}, force=False))
+        self.assertTrue(_needs_browser([web_row], {"FIG-002": {"status": "已截图"}}, force=True))
+
+    def test_pdf_only_manifest_does_not_launch_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest = root / "screenshot_manifest.csv"
+            manifest.write_text(
+                "fig_id,url,capture,selector\nFIG-001,https://example.com/a.pdf,pdf,1\n",
+                encoding="utf-8",
+            )
+            figures = root / "figures.csv"
+
+            def fake_pdf(url: str, out_path: Path, page_spec: str, deadline: float):
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(b"\x89PNG\r\n")
+                return True, ""
+
+            with patch(
+                "playwright.sync_api.sync_playwright",
+                side_effect=AssertionError("纯 PDF 清单不应启动浏览器"),
+            ), patch("tools.screenshot.capture_pdf", side_effect=fake_pdf):
+                code = run(manifest, figures, root, force=False)
+
+            self.assertEqual(code, 0)
+            self.assertTrue((root / "images" / "FIG-001.png").exists())
+            self.assertEqual(load_existing(figures)["FIG-001"]["status"], "已截图")
 
 
 if __name__ == "__main__":

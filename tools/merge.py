@@ -177,12 +177,15 @@ def main() -> int:
     ap.add_argument("--topic", default=None, help="研究课题（默认同 title）")
     ap.add_argument("--depth", default="标准", help="快速|标准|深度")
     ap.add_argument("--scope", default="", help="研究范围")
+    ap.add_argument("--data-cutoff-date", type=date.fromisoformat, help="资料截止日期，默认为当天")
     ap.add_argument("--audience", default="", help="目标读者")
     ap.add_argument(
         "--out",
         default=None,
         help="组装稿路径（默认 <root>/report/_assembled_report.md）",
     )
+    ap.add_argument("--require-synthesis", action="store_true",
+                    help="多章任务必须提供带来源的 report/_synthesis.md")
     ap.add_argument("--require-meta", action="store_true",
                     help="要求每章都有字段完整的同名 .meta.json（新流程推荐）")
     args = ap.parse_args()
@@ -252,6 +255,19 @@ def main() -> int:
         body_chunks.append(new_text.rstrip())
 
     toc = "## 目录\n\n" + "\n".join(toc_lines) + "\n\n---\n\n" if toc_lines else ""
+    synthesis_file = report_dir / "_synthesis.md"
+    new_brief = (root / "sources" / "delivery_brief.json").is_file()
+    if (args.require_synthesis or new_brief) and len(drafts) > 1 and not synthesis_file.is_file():
+        sys.exit("✗ 多章报告缺少跨章综合 report/_synthesis.md")
+    if synthesis_file.exists():
+        synthesis = synthesis_file.read_text(encoding="utf-8").strip()
+        if not synthesis or not TAG_RE.search(synthesis) or re.search(r"\[\d{1,4}\]", synthesis):
+            sys.exit("✗ 综合摘要需要复用章节源标签，不能写空稿或手填引用编号")
+        for match in TAG_RE.finditer(synthesis):
+            inner = normalize_tag_inner(match.group(1).strip())
+            if (norm_key(extract_url(inner)) or inner) not in key_to_num:
+                sys.exit("✗ 综合摘要引用了章节未登记的来源，请先回到研究阶段核证")
+        body_chunks.insert(0, TAG_RE.sub(repl, synthesis))
     body = ("\n\n---\n\n".join(body_chunks)) + "\n"
 
     frontmatter_data = {
@@ -260,7 +276,7 @@ def main() -> int:
         "research_topic": topic,
         "version": "1.0",
         "created_date": today,
-        "data_cutoff_date": today,
+        "data_cutoff_date": args.data_cutoff_date.isoformat() if args.data_cutoff_date else today,
         "depth": args.depth,
         "research_scope": args.scope,
         "target_audience": args.audience,

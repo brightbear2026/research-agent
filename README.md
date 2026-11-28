@@ -18,6 +18,7 @@
 
 - **三类入口**：Claude Code 命令、Codex/ChatGPT Work 技能与根目录 Agent Skill 共用同一状态机、schema v2、聚合器和 QC。
 - **领域定位**：科技/产业（Web 为主 + 企业官网/财报/白皮书/标准/政策/券商与投行研报）。
+- **分析型章节**：用同一组维度比较来源，在正文给出判断、适用条件和待验证问题。按关系选择矩阵、流程图或趋势图；已采集的长页可在论断旁链接原图。[厂商比较样章](examples/vendor-comparison.html)
 - **截图**：Playwright 真实捕获（失败落占位，绝不伪造）。
 
 ### 项目亮点
@@ -34,6 +35,12 @@
 - **可审查交付物**：同时生成规范 Markdown、HTML、数据表、证据矩阵、争议矩阵、来源清单和资料缺口清单。
 - **券商研报正式入库**：广泛调研主动覆盖券商/投行研报；章节元数据保留分析师、预测期、关键假设、评级/目标价与利益冲突，聚合为 `data/broker_report_list.csv`。预测作为机构观点，底层事实回溯原始来源。
 - **两段式 QC 交付门禁**：核心检查（引用闭环、事实标签同段引用、独立来源、截图、漂移审计、可读性、内容禁忌）`exit 0` 即可交付；死链、链接警告、来源时效、段落级数值来源等 advisory 项不阻断，写入 `data/qc_debt.json` 异步收尾。**死链永不阻断**——失效且无归档的 URL 会在清单中提示；Wayback 仅提供历史访问线索，不能据有无归档判定来源真伪或引用是否有效。新增段落级数值来源（单 C/D 级来源支撑的【事实】数值）与快变领域来源时效校验。
+
+### v2.3.0-beta.1 本地测试版
+
+测试包解压后进入 research-agent 目录，运行 `uv sync --locked`、`uv run playwright install chromium` 和 `uv run python tools/check_env.py`。
+
+研究深度、交付篇幅分别约定。需要跨章归纳的报告在组装前生成带来源的综合摘要，终稿仍受声明账本审计。参见[交付协议](references/report_delivery.md)、[测试与发布计划](docs/v2.3-report-quality-plan.md)及[宿主测试说明](docs/multi-host-plan.md)。WorkBuddy、DSH 本轮提供候选入口。
 
 ### v2.2.0 研究流程更新
 
@@ -69,6 +76,12 @@
 | 执行模式 | `mode=execution` | 0 次 | 连续执行六阶段并尝试完成交付 | 目标和范围明确，希望减少仓库流程等待 |
 
 “执行模式零确认”仅指本仓库不主动设置内容检查点。系统权限审批、登录、验证码、付费墙和网站访问控制仍然有效；访问失败会在有限重试后转为资料缺口，不会被绕过或无限重试。
+
+### 需求澄清怎样触发
+
+直接使用现有命令，例如 `/deep-research 国内 MCP Gateway 市场 mode=regular`。若用途会改变研究方向，Agent 会先问报告用于立项、选型还是方案设计，并根据回答决定下一问。给出“为产品委员会评估独立采购与平台扩展，重点看实际采购证据”这样的具体需求，就可以直接拆题。
+
+启动记录 `sources/stage1_kickoff.md` 保存必答问题、验收依据和工作假设。大纲把问题分配到各章。计划模式将待定取舍集中到大纲确认时处理，执行模式按记录的假设连续推进。[需求澄清规则](CLAUDE.md#阶段一的需求澄清)
 
 ### 核心红线
 
@@ -158,11 +171,11 @@ uv run python tools/workflow_policy.py next-chapter --root projects/my-topic
 
 | 取值 | 章节数 | 每个结论来源 | 截图 |
 |---|---|---|---|
-| `快速` | 3–5 个论证章节，约 1–2 万字 | 重要结论 ≥1；数值声明仍须 ≥2 个独立来源 | 按需 |
-| `标准`（默认） | 5–8 个论证章节，约 2–4 万字 | 重要结论 ≥2 个独立来源，且至少含 A/B 级 | 关键页强制 |
-| `深度` | 6–10 个论证章节，原则上 ≤6 万字 | 标准要求 + 每章多轮交叉与反向验证 | 全量 |
+| `快速` | 3–5 个论证章节 | 重要结论 ≥1；数值声明仍须 ≥2 个独立来源 | 按需 |
+| `标准`（默认） | 5–8 个论证章节 | 重要结论 ≥2 个独立来源，且至少含 A/B 级 | 关键证据局部 |
+| `深度` | 6–10 个论证章节 | 标准要求 + 每章多轮交叉与反向验证 | 关键材料按需留档 |
 
-严格 QC 的最低正文完整度为快速 4,000、标准 10,000、深度 18,000 个去空白字符；这是防止占位稿通过的下限，不替代上表的目标篇幅和内容质量要求。
+默认篇幅为提示。简报也须有实质解释、来源及证据；明确约定的字符边界由 QC 校验。
 
 ### 六阶段流程
 
@@ -261,7 +274,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` 是确定性组装稿；`report/research_report.md` 是经受限总编辑处理后的规范终稿（canonical）。
 - 引用 `[n]`、图片、表格从 `data/{citations,figures,tables}.csv` 派生。
 - HTML 由 `render_html.py` 从 Markdown + 旁路索引生成，**禁止两版分别手写**。
-- `qc.py --strict` 是两段式门禁：核心检查（引用闭环、事实标签同段引用、独立来源数量、图片、内容禁忌、英文直接引语长度、分档最低完整度与可读性、总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件）须 `exit 0` 才可交付；死链、链接警告、快变领域来源时效、段落级数值来源等 advisory 项写入 `data/qc_debt.json`，不阻断。死链永不阻断——失效链接记录在清单中；有无归档不能判定来源真伪或引用是否有效。最低完整度用于拦截占位稿，不是鼓励重复或凑字数。
+- `qc.py --strict` 是两段式门禁：核心检查（引用闭环、事实标签同段引用、独立来源数量、图片、内容禁忌、英文直接引语长度、空稿及可读性、总编辑是否新增数字/日期/实体、升级确定性或因果关系、删除限制条件）须 `exit 0` 才可交付；死链、链接警告、快变领域来源时效、段落级数值来源等 advisory 项写入 `data/qc_debt.json`，不阻断。死链永不阻断——失效链接记录在清单中；有无归档不能判定来源真伪或引用是否有效。
 
 ### 交付目录契约（由 `scaffold.py` 生成）
 
@@ -314,9 +327,10 @@ A reusable, evidence-driven research agent for **Claude Code, Codex/ChatGPT Work
 - **No circular evidence**: conclusion text cannot serve as its own support.
 - **Claim-ledger editing audit**: blocks new numbers, dates, entities, causal claims, certainty escalation, and loss of limitations.
 - **Bounded, compliant capture**: real browser/PDF capture with path, size, page, pixel, retry, and deadline limits; no access-control bypass.
+- **Analytical chapters** compare evidence on shared dimensions, explain implications and open questions, and show focused excerpts or link to archived screenshots. [Example chapter in Chinese](examples/vendor-comparison.html)
 - **Reviewable deliverables**: Markdown, HTML, evidence and controversy matrices, data tables, source indexes, screenshots, and research gaps.
 - **Broker research as a first-class input**: the survey actively covers sell-side reports; chapter metadata preserves analysts, forecast horizons, assumptions, ratings/targets, disclosures, and access limits, then aggregates used reports into `data/broker_report_list.csv`. Forecasts remain institutional views and underlying facts are traced to primary sources.
-- **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — failed links are recorded in the debt manifest; archive presence or absence does not establish authenticity or citation support. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and minimum completeness floors that block stub reports.
+- **Two-phase delivery gate**: core checks (`exit 0`) make the report deliverable; advisory items (dead links, link warnings, source freshness, paragraph-level numeric sourcing) are written to a structured `data/qc_debt.json` for async cleanup. Dead links never block delivery — failed links are recorded in the debt manifest; archive presence or absence does not establish authenticity or citation support. Core gates still include local citations for fact paragraphs, independent-source checks, banned-phrase and box-diagram checks, a 25-word English quotation limit, and checks for missing explanation or evidence.
 
 ### What's new in the v2.2.0 research workflow
 
@@ -350,6 +364,12 @@ Every generated diagram must link `source_ids` and `supports_claim_ids`, appear 
 | Execution | `mode=execution` | 0 | Final delivery attempt | A clear brief with minimal workflow pauses |
 
 Zero checkpoints in execution mode applies only to repository-defined content confirmations. System permissions, authentication, CAPTCHA, paywalls, and site controls still apply. Failed sources are retried within finite budgets, then disclosed as research gaps.
+
+### How the kickoff interview works
+
+Use the existing command, for example `/deep-research domestic MCP gateway market mode=regular`. If the intended use would change the research, the agent first asks which decision the report supports. A brief that already specifies the audience, alternatives and evidence needed goes straight to research planning.
+
+The brief at the top of `sources/stage1_kickoff.md` records the must-answer questions, acceptance criteria and working assumptions. The outline assigns these questions to chapters. Plan mode brings open choices to the outline review. Execution mode proceeds under documented assumptions. [Kickoff rules](CLAUDE.md#阶段一的需求澄清)
 
 ### Core Red Lines
 
@@ -427,11 +447,11 @@ Each run writes to its own `projects/<topic-slug>/` directory.
 
 | Value | Chapters | Sources per conclusion | Screenshots |
 |---|---|---|---|
-| `fast` (`快速`) | 3–5 argument chapters, ~10–20k Chinese chars | ≥1 for key conclusions; numeric claims still need ≥2 independent sources | as needed |
-| `standard` (`标准`, default) | 5–8 argument chapters, ~20–40k Chinese chars | ≥2 independent sources for key conclusions, including at least one A/B source | key pages forced |
-| `deep` (`深度`) | 6–10 argument chapters, normally ≤60k Chinese chars | standard requirements plus multi-round cross-checking and counter-evidence review | full |
+| `fast` (`快速`) | 3–5 argument chapters | ≥1 for key conclusions; numeric claims still need ≥2 independent sources | as needed |
+| `standard` (`标准`, default) | 5–8 argument chapters | ≥2 independent sources for key conclusions, including at least one A/B source | relevant excerpts |
+| `deep` (`深度`) | 6–10 argument chapters | standard requirements plus multi-round cross-checking and counter-evidence review | archive originals where useful |
 
-Strict QC uses minimum non-whitespace completeness floors of 4,000 / 10,000 / 18,000 characters for fast / standard / deep. These floors reject stubs; they do not replace the target ranges or evidence-quality requirements above.
+Depth-based length is advisory. Explicit character bounds are checked against the delivery brief.
 
 ### Six-Phase Pipeline
 
@@ -526,7 +546,7 @@ uv run python tools/charts.py bar --data <csv> --x <col> --y <col> --out images/
 - `report/_assembled_report.md` is the deterministic assembly; `report/research_report.md` is the constrained editor's canonical final narrative.
 - Citations `[n]`, figures, and tables derive from `data/{citations,figures,tables}.csv`.
 - HTML is generated by `render_html.py` from Markdown + sidecar indexes — **never hand-author both versions**.
-- `qc.py --strict` is a two-phase gate: core checks (citation closure, local citations for fact paragraphs, independent support, figures, prohibited content, quotation length, minimum completeness, readability, factual drift after editing) must `exit 0` to deliver; advisory items (dead links, link warnings, source freshness for fast-moving domains, paragraph-level numeric sourcing) are written to `data/qc_debt.json` and never block. Dead links never block — failed links are recorded in the debt manifest; archive availability does not establish authenticity or citation support. Completeness floors block stubs; they are not targets for repetitive padding.
+- `qc.py --strict` is a two-phase gate: core checks (citation closure, local citations for fact paragraphs, independent support, figures, prohibited content, quotation length, minimum completeness, readability, factual drift after editing) must `exit 0` to deliver; advisory items (dead links, link warnings, source freshness for fast-moving domains, paragraph-level numeric sourcing) are written to `data/qc_debt.json` and never block. Dead links never block — failed links are recorded in the debt manifest; archive availability does not establish authenticity or citation support. Depth-based length is advisory.
 
 ### Delivery Tree (created by `scaffold.py`)
 

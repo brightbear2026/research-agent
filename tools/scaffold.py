@@ -139,6 +139,8 @@ def scaffold(root: Path, force: bool, *, allowed_parent: Path = DEFAULT_PROJECTS
     for rel, content in MD_FILES:
         (root / rel).write_text(content, encoding="utf-8")
 
+    (root / "sources" / "delivery_brief.json").write_text("{}\n", encoding="utf-8")
+
     # 报告占位
     (root / "report" / "research_report.md").write_text(
         "---\ntitle: \"\"\nsubtitle: \"\"\nauthor: \"深度研究项目组\"\nversion: \"V1.0\"\ncreated_date: \"\"\ndata_cutoff_date: \"\"\nlanguage: \"zh-CN\"\nformat: \"deep-research-report\"\n---\n\n# 研究报告标题\n\n> 待填充。\n",

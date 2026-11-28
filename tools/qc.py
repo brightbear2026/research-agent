@@ -20,7 +20,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
+
+from markdown_it import MarkdownIt
 
 try:
     from tools.claim_ledger import audit_text
@@ -587,13 +589,27 @@ def check_figures(
     if fake:
         names = [r.get("fig_id", "?") for r in fake]
         add_issue(report, f"存在占位/失败截图（非原始截图）：{names} —— 请人工后补或正文标注", strict)
-    # 反向校验：真实截图必须内联到正文，不得只留在索引或集中堆末尾
+    # 证据链接使用相对 report/ 的路径，确保 Markdown 和 HTML 可打开同一原图。
+    archive_paths = set()
+    for block in MarkdownIt("commonmark").enable("table").parse(md_text):
+        for token in block.children or ():
+            if token.type != "link_open":
+                continue
+            href = unquote(token.attrGet("href") or "")
+            if href.startswith("../images/") and href.endswith(".png"):
+                archive_paths.add(href.removeprefix("../"))
+    registered_paths = {r["local_path"] for r in figures if r.get("local_path")}
+    for path in sorted(archive_paths):
+        if path not in registered_paths or not (root / path).is_file():
+            add_issue(report, f"原图链接文件缺失或未登记：{path}", strict)
+
     unplaced = [r.get("fig_id", "?") for r in figures
                 if (r.get("status") or "") == "已截图"
                 and r.get("local_path")
-                and Path(r["local_path"]).name not in fig_refs]
+                and Path(r["local_path"]).name not in fig_refs
+                and r["local_path"] not in archive_paths]
     if unplaced:
-        add_issue(report, f"已生成截图未内联到正文（应插入对应章节，勿集中堆附录/末尾）：{unplaced}", strict)
+        add_issue(report, f"已生成截图缺少正文展示或原图链接：{unplaced}", strict)
     report.ok.append(f"图片检查：正文引用 {len(fig_refs)} 个 / 登记 {len(figures)} 个")
 
 
@@ -798,6 +814,51 @@ def _percentile(values: list[int], ratio: float) -> int:
     return ordered[min(len(ordered) - 1, int((len(ordered) - 1) * ratio))]
 
 
+def delivery_body(md_text: str) -> str:
+    """可交付正文，不含元数据、目录、书目或证据附件。"""
+    text = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", md_text, flags=re.DOTALL)
+    text = re.split(r"(?m)^#{1,3}\s+(?:参考文献|证据与方法附件|附录)\s*$", text, maxsplit=1)[0]
+    return re.sub(r"(?ms)^#{1,3} +目录[ \t]*\n.*?(?=^#|\Z)", "", text)
+
+
+def delivery_chars(body: str) -> int:
+    """统计段落、列表、表格中的可见文本字符，不计引用号、标题或代码块。"""
+    parts = []
+    heading = False
+    for token in MarkdownIt("commonmark").enable("table").parse(body):
+        if token.type == "heading_open":
+            heading = True
+        elif token.type == "heading_close":
+            heading = False
+        elif token.type == "inline" and not heading:
+            parts.extend(child.content for child in token.children or ()
+                         if child.type in {"text", "code_inline"})
+    return len(re.sub(r"\[\d{1,4}\]|\s+", "", "".join(parts)))
+
+
+def check_delivery_length(report: Report, body: str, brief_path: Path, strict: bool) -> None:
+    if not brief_path.exists():
+        return
+    try:
+        brief = json.loads(brief_path.read_text(encoding="utf-8"))
+        if not isinstance(brief, dict):
+            raise ValueError("交付约定必须是对象")
+        lower, upper = brief.get("min_chars"), brief.get("max_chars")
+        for bound in (lower, upper):
+            if bound is not None and (type(bound) is not int or bound < 0):
+                raise ValueError("字符边界必须是非负整数")
+        if lower is not None and upper is not None and lower > upper:
+            raise ValueError("最小字符数大于最大字符数")
+    except (OSError, ValueError) as exc:
+        add_issue(report, f"交付约定无效：{exc}", strict)
+        return
+    if lower is None and upper is None:
+        return
+    count = delivery_chars(body)
+    if (lower is not None and count < lower) or (upper is not None and count > upper):
+        add_issue(report, f"未满足约定篇幅：正文含表格 {count} 字符，下限 {lower}，上限 {upper}", strict)
+
+
 def narrative_text(md_text: str) -> str:
     """提取用于可读性统计的正文，排除元数据、代码、表格和参考文献。"""
     text = re.sub(r"\A---\s*\n.*?\n---\s*\n", "", md_text, flags=re.DOTALL)
@@ -858,19 +919,16 @@ def check_readability(
     sentences = [s.strip() for s in re.split(r"[。！？!?；]\s*", "\n".join(paragraphs)) if s.strip()]
     sentence_lengths = [len(s) for s in sentences]
 
-    if body_chars < profile.min_body_chars:
-        add_issue(
-            report,
-            f"正文约 {body_chars} 字符，低于 {depth} 档最低完整度 {profile.min_body_chars}；"
-            "请补齐核心论证、证据解释、反证和限制，不得用重复文字凑数",
-            strict,
-        )
-    if body_chars > profile.max_body_chars:
-        add_issue(
-            report,
-            f"正文约 {body_chars} 字符，超过 {depth} 档建议上限 {profile.max_body_chars}",
-            strict,
-        )
+    delivered = delivery_body(md_text)
+    prose = re.sub(r"(?m)^#{1,6} .*?$", "", narrative_text(delivered))
+    prose = re.sub(r"(?m)^.*(?:查看完整截图|原始材料备查).*?$", "", prose)
+    prose = re.sub(r"<[^>]+>|\[\d{1,4}\]", "", prose)
+    statements = [line.strip(" -*。") for line in prose.splitlines() if line.strip(" -*。")]
+    placeholders = {"待补充", "待填写", "暂无", "TBD", "TODO", "待确认"}
+    if not any(re.search(r"[^\W_]", line) and line not in placeholders for line in statements) or not extract_citation_ids(delivered):
+        add_issue(report, "最低完整度：正文需有解释文字及就近来源引用（可在表格内）。", strict)
+    if not profile.min_body_chars <= body_chars <= profile.max_body_chars:
+        report.warnings.append(f"篇幅观察：叙述约 {body_chars} 字符；按启动时的交付约定验收。")
     overly_long = [n for n in sentence_lengths if n > profile.max_sentence_chars]
     if overly_long:
         add_issue(
@@ -1093,6 +1151,7 @@ def run(
         check_evidence_independence(rep, root, depth, strict)
     check_figures(rep, md_text, figures, root, strict)
     check_diagrams(rep, md_text, diagrams, figures, root, strict)
+    check_delivery_length(rep, delivery_body(md_text), root / "sources" / "delivery_brief.json", strict)
     if not skip_readability:
         check_readability(rep, md_text, depth, strict)
     else:
