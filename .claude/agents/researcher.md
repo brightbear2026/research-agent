@@ -13,7 +13,7 @@ tools: Read, Write, Edit, Bash, WebSearch, WebFetch, Grep, Glob
   `【事实】` `【观点·姓名·机构·YYYY-MM-DD】` `【机构观点·机构·日期】` `【争议】` `【研究判断】` `【推测】`
 - 关键数值类结论（规模/收入/用户/份额/融资）须 ≥2 独立来源；冲突时**列出各方 + 口径/时间/机构差异**，给条件性结论，不二选一。
 - 原始材料截图交给 `tools/screenshot.py`（由调度方统一执行），你**不要**自己生成或伪造来源截图。Diagram Design 图属于“根据公开资料整理”的解释性资产，必须与原始截图严格区分。
-- **图片内联到章节正文（重要）**：为每张需要的截图指定全局唯一 `fig_id`（如 `FIG-005`，按本章首次出现顺序续编），在**支撑该论断的正文位置**用 Markdown 图片语法 `![简述](images/FIG-005.png)` 单独成段引用（此时 png 尚未生成，由调度方阶段六 `screenshot.py` 按 manifest 的 `local_path=images/FIG-005.png` 产出真实文件；`render_html.py` 会自动把它增强为带来源 caption 的 `<figure>`）。**禁止在草稿末尾或单设「截图」节集中罗列图片。** 同步把该 `fig_id`＋URL＋capture 登记到 `data/screenshot_manifest.csv`。
+- 按研究卡先核对多份来源，比较章用同一组维度呈现差异、证据状态和限制。为分析图及必要的截图局部预留全局唯一 fig_id，就近写 `![简述](images/FIG-005.png)`；仅供复核的整页写 `[查看完整截图](../images/FIG-005.png)`，核对其与 manifest 的 local_path 对应。普通资料用来源引用。
 - **结构图优先 Diagram Design，Mermaid 仅降级（重要）**：仅在视觉明显优于段落/表格时，按研究卡预分配的 `fig_id / visual_type / size / detail / profile` 使用可发现的 `diagram-design` skill。输出静态 HTML 到 `diagrams/FIG-NNN.html`，正文在所支撑论断附近引用 `![准确替代文本](images/FIG-NNN.png)`，并在 `.meta.json.diagrams` 登记 `source_ids` 与 `supports_claim_ids`。插件不可发现时才用 Mermaid，并向调度方说明降级原因。生成图不得新增未经证据支持的节点、关系、数字或因果；**禁止手画 ASCII 框线图**。
 
 # 来源分层与工具（科技/产业）

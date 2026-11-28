@@ -23,6 +23,6 @@ chapters:
     depends_on: []
     hands_off_to: []
     non_goals: []
-    target_words: 3000
+    intended_output: ""
 
 appendix_candidates: []

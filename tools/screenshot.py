@@ -9,7 +9,7 @@ manifest.csv 列（由 scaffold 生成表头）:
   publish_date,supports_conclusion,is_primary_source,alternative_url
 
 - capture ∈ {full, viewport, element, pdf}；
-  - full=整页、viewport=视口、element=按 CSS selector 截区块、
+  - full=整页、viewport=视口（默认）、element=按 CSS selector 截区块、
   - pdf=下载 PDF 并渲染指定页（selector 填页码，如 "1" / "1-3" / "2,4"，默认第 1 页；多页纵向拼接）。
 - 成功 → 写真实 PNG，status=已截图。
 - 失败 → **绝不伪造**真实内容；写一张**明确标注的占位 PNG**（写明"截图占位/失败原因"），status=失败(占位)。
@@ -19,6 +19,7 @@ manifest.csv 列（由 scaffold 生成表头）:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import re
 import sys
@@ -173,7 +174,6 @@ def capture_one(page, row: dict) -> tuple[bool, str]:
     url = row.get("url", "").strip()
     if not url or not url.startswith(("http://", "https://")):
         return False, f"无效 URL: {url!r}"
-    capture = (row.get("capture") or "full").strip().lower()
     selector = (row.get("selector") or "").strip()
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
@@ -216,13 +216,15 @@ def do_screenshot(page, out_path: Path, capture: str, selector: str) -> tuple[bo
             el.screenshot(path=str(out_path))
         elif capture == "viewport":
             page.screenshot(path=str(out_path), full_page=False)
-        else:  # full
+        elif capture == "full":
             dimensions = page.evaluate("() => ({width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight})")
             width = int(dimensions.get("width", VIEWPORT["width"]))
             height = int(dimensions.get("height", VIEWPORT["height"]))
             if height > MAX_STITCH_HEIGHT or width * height > MAX_IMAGE_PIXELS:
                 return False, f"整页截图尺寸超限: {width}x{height}"
             page.screenshot(path=str(out_path), full_page=True)
+        else:
+            return False, f"未知截图模式: {capture}"
         return True, ""
     except Exception as e:
         return False, f"截图异常: {e}"
@@ -396,6 +398,21 @@ def capture_pdf(
         Path(temp_name).unlink(missing_ok=True)
 
 
+def _needs_browser(manifest: list[dict], rows: dict[str, dict], force: bool) -> bool:
+    """只有存在待拍的网页行才需要 Chromium；纯 PDF 清单不启动浏览器。"""
+    for row in manifest:
+        fig_id = (row.get("fig_id") or "").strip()
+        if not re.fullmatch(r"FIG-\d{3,}", fig_id):
+            continue
+        if fig_id in rows and not force and rows[fig_id].get("status") == "已截图":
+            continue
+        cap = (row.get("capture") or "").strip().lower() or "viewport"
+        url = (row.get("url") or "").strip()
+        if not (cap == "pdf" or url.lower().endswith(".pdf")):
+            return True
+    return False
+
+
 def run(
     manifest_path: Path,
     figures_path: Path,
@@ -413,25 +430,29 @@ def run(
         print("manifest 为空，无操作。")
         return 0
 
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        sys.exit("✗ 未安装 playwright，请: uv add playwright && uv run playwright install chromium")
-
     # 始终合并已有索引（--force 仅控制是否重拍已截图项，绝不丢弃既有行）
     rows = load_existing(figures_path)
     today = date.today().isoformat()
     ok = fail = skipped = 0
 
     try:
-        with sync_playwright() as p:
-            try:
-                browser = p.chromium.launch(headless=True)
-            except Exception:
-                # headless shell 未安装时兜底：改用完整 Chromium 的新 headless 模式（仍为真实 Playwright 捕获）
-                browser = p.chromium.launch(headless=True, channel="chromium")
-            context = browser.new_context(viewport=VIEWPORT, user_agent=UA, locale="zh-CN")
-            page = context.new_page()
+        with contextlib.ExitStack() as stack:
+            page = None
+            if _needs_browser(manifest, rows, force):
+                try:
+                    from playwright.sync_api import sync_playwright
+                except ImportError:
+                    sys.exit("✗ 未安装 playwright，请: uv add playwright && uv run playwright install chromium")
+                p = stack.enter_context(sync_playwright())
+                try:
+                    browser = p.chromium.launch(headless=True)
+                except Exception:
+                    # headless shell 未安装时兜底：改用完整 Chromium 的新 headless 模式（仍为真实 Playwright 捕获）
+                    browser = p.chromium.launch(headless=True, channel="chromium")
+                stack.callback(browser.close)
+                context = browser.new_context(viewport=VIEWPORT, user_agent=UA, locale="zh-CN")
+                stack.callback(context.close)
+                page = context.new_page()
 
             for row in manifest:
                 fig_id = (row.get("fig_id") or "").strip()
@@ -455,7 +476,7 @@ def run(
                     continue
 
                 url = (row.get("url") or "").strip()
-                cap = (row.get("capture") or "full").strip().lower()
+                cap = (row.get("capture") or "").strip().lower() or "viewport"
                 is_pdf = cap == "pdf" or url.lower().endswith(".pdf")
                 tag = "[PDF]" if is_pdf else ("[element]" if cap == "element" else "")
                 print(f"  → {fig_id} {tag} {url[:80]}")
@@ -500,8 +521,6 @@ def run(
                     "alternative_url": row.get("alternative_url", ""),
                 }
 
-            context.close()
-            browser.close()
     except Exception as e:
         if "Executable doesn't appear" in str(e) or "playwright install" in str(e).lower():
             sys.exit("✗ 未安装浏览器，请: uv run playwright install chromium\n" + str(e))

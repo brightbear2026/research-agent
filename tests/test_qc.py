@@ -120,6 +120,27 @@ class QCTests(unittest.TestCase):
             )
             self.assertTrue(any("占位" in x for x in report.errors))
 
+    def test_archived_capture_requires_a_working_report_relative_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "images" / "FIG-001.png"
+            path.parent.mkdir()
+            path.touch()
+            figures = [{"fig_id": "FIG-001", "local_path": "images/FIG-001.png", "status": "已截图"}]
+            for target, valid in [("../images/FIG-001.png", True), ("images/FIG-001.png", False),
+                                  ("https://example.org/FIG-001.png", False)]:
+                with self.subTest(target=target):
+                    report = Report()
+                    check_figures(report, f"[完整截图]({target})", figures, root, True)
+                    self.assertEqual(not report.errors, valid)
+            report = Report()
+            check_figures(report, "`[示例](../images/FIG-001.png)`", figures, root, True)
+            self.assertTrue(report.errors)
+            path.unlink()
+            report = Report()
+            check_figures(report, "[完整截图](../images/FIG-001.png)", figures, root, True)
+            self.assertTrue(report.errors)
+
     def test_editor_cannot_introduce_new_citations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             baseline = Path(tmp) / "assembled.md"

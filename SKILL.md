@@ -1,7 +1,7 @@
 ---
 name: deep-research
 description: "Use when user requests systematic deep research on a topic. Six-phase pipeline (survey → evidence → outline → chapter research → assembly+editing → delivery) producing Markdown+HTML dual-format reports with evidence matrices. Enforces no-fabrication red lines, source tiering, claim-ledger audits, workflow modes, and real screenshots. Ported from Claude Code research-agent v2."
-version: 2.2.0
+version: 2.3.0-beta.1
 author: Hermes Agent (ported from brightbear2026/research-agent)
 license: MIT
 platforms: [linux, macos, windows]
@@ -65,7 +65,7 @@ cd <skill_dir> && uv run python tools/check_env.py
 1. **Enhanced QC quality gates**: fact citation locality check (each 【事实】 must have same-paragraph [n] citation), banned phrase detection, ASCII box-drawing detection, English quote length limits, source independence verification via `source_identity.py`.
 2. **Source identity module** (`tools/source_identity.py`): URL canonicalization (strips tracking params, normalizes www/DOI/arXiv versions) and source independence grouping (by org/domain, not just URL).
 3. **Chapter progress tracking** (`workflow_policy.py register-chapters`): register chapters in Phase 4, track per-chapter status (pending/in_progress/completed/failed), resume from next incomplete chapter after interruption.
-4. **Minimum body character thresholds**: 快速≥4000, 标准≥10000, 深度≥18000 non-whitespace characters — blocks placeholder drafts.
+4. **Minimum body character thresholds**: 快速≥4000, 标准≥10000, 深度≥18000 non-whitespace characters (historical v2.1 behavior; superseded in v2.3).
 5. **Scaffold path safety**: projects must be inside `projects/` directory, prevents path traversal.
 6. **check_env.py**: verifies Python version, Playwright package, and Chromium binary consistency.
 7. **Evidence independence**: chapter conclusions need ≥2 independent sources (by organization/domain), not just ≥2 source_ids that may be from the same org.
@@ -103,6 +103,8 @@ cd <skill_dir> && uv run python tools/check_env.py
 
 ## Phase 1: Research Kickoff
 
+Apply the “阶段一的需求澄清” section of `CLAUDE.md` before expanding the topic into research questions. Use the selected mode's interview policy. Put the resulting brief at the top of the kickoff record.
+
 Write output to `sources/stage1_kickoff.md`:
 1. Topic definition & boundaries.
 2. **Concept decomposition & disambiguation (critical, cannot skip)**.
@@ -123,7 +125,7 @@ Read the Phase 2 source dimensions from the canonical `.claude/commands/deep-res
 
 1. Produce `sources/stage3_argument_map.yaml`.
 2. Produce `sources/stage3_outline.md` (three-level outline).
-3. Each chapter lists: reader question, one-line conclusion, role, dependencies, target word count, evidence needed.
+3. Map each must-answer question from the kickoff brief to its chapter. Carry its acceptance criteria into the research card. In plan mode, resolve outstanding choices at outline confirmation and apply corrections before stopping. Each chapter lists: reader question, one-line conclusion, role, dependencies, delivery format, evidence needed.
 4. Compile typed search tasks per chapter into `sources/stage3_search_tasks.yaml`: `explore` (chapter exploration) / `refute` (counter-evidence & limitations) / `pin` (must-cite primary source — trace back to the original paper introducing the method/dataset/metric, not secondhand retellings). Each task carries `task_id / focus / expected evidence`; Phase 4 registers them into chapter `search_tasks`.
 5. Plan Diagram Design only when a relationship, architecture, flow, timeline, quadrant, or competitive landscape is materially clearer than prose/table. Usually cap at two per chapter and record `fig_id`, visual type, size, detail, profile, source IDs, and supported claim IDs.
 
@@ -147,9 +149,11 @@ Read the Phase 2 source dimensions from the canonical `.claude/commands/deep-res
 
 ## Phase 5: Deterministic Assembly + Editor
 
+Read `references/report_delivery.md` and complete the cross-chapter synthesis before freezing claims.
+
 ### Step 1: Merge (generates claim ledger)
 ```bash
-cd <skill_dir> && uv run python tools/merge.py projects/<slug> --require-meta --title "报告标题"
+cd <skill_dir> && uv run python tools/merge.py projects/<slug> --require-meta --require-synthesis --title "报告标题"
 ```
 This deduplicates source tags, assigns global `[n]` citations, generates `data/citations.csv`, `data/chapter_meta.json`, `data/claim_ledger.json`, and `report/_assembled_report.md`.
 
@@ -241,11 +245,11 @@ Reports are delivered as a standalone folder. By default, deliver to the user's 
 
 ## Depth Settings
 
-- **快速(quick)**: 3-5 chapters, ~10-20k chars, ≥1 A/B source for key conclusions, screenshots as needed.
-- **标准(standard)**: 5-8 chapters, ~20-40k chars, ≥2 independent sources with A/B tier, mandatory screenshots for key pages.
-- **深度(deep)**: 6-10 chapters, up to 60k chars, standard + multi-round counter-verification per chapter + full screenshots.
+- **快速(quick)**: 3-5 chapters, ≥1 A/B source for key conclusions, screenshots as needed.
+- **标准(standard)**: 5-8 chapters, ≥2 independent sources with A/B tier, capture the excerpt when the reader needs to inspect the original.
+- **深度(deep)**: 6-10 chapters, standard + multi-round counter-verification per chapter + archived originals where useful.
 
-Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 ≥ 10,000 / 深度 ≥ 18,000.
+Depth-based length is advisory. Explicit character bounds are checked against the delivery brief.
 
 ## Always Follow
 
@@ -264,7 +268,7 @@ Minimum body character thresholds (non-whitespace): 快速 ≥ 4,000 / 标准 �
 
 2. **Editor with web access** — the report-editor MUST run with `-t file` toolset.
 
-3. **Concentrating screenshots at chapter end** — screenshots must be inline at the argument they support.
+3. **Concentrating screenshots at chapter end** — show essential excerpts near the claim. Link archived originals using report-relative paths, e.g. `[查看完整截图](../images/FIG-005.png)`.
 
 4. **Using ASCII box diagrams** — use Diagram Design when available and worthwhile, otherwise Mermaid.
 
